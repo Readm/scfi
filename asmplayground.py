@@ -108,9 +108,13 @@ class AsmSrc(str):
                 current_loc=line.get_loc
             elif line.is_instruction:
                 line.set_loc(current_loc)
+    
+    def __str__(self):
+        return ''.join([self.lines])
 
     def update_debug_file_number(self,path):
         # we add more keys to the debug_file_number to facilitate the mapping
+        if not path: return
         for key in [k for k in self.debug_file_number.keys()]:
             new_key = key.replace(path,'')
             self.debug_file_number[new_key]=self.debug_file_number[key]
@@ -137,8 +141,6 @@ class AsmSrc(str):
             asm = cls(f.read())
             asm.update_debug_file_number(src_path)
             return asm
-
-
 
 if __name__=="__main__":
     asm=AsmSrc.read_file('./testcase/401.bzip.s')
