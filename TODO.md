@@ -8,10 +8,12 @@
     + [x]  读取CFG信息，标记所有相关指令
     + [ ]  分配slot
       + [x] 随机allocation
-    + [ ]  添加padding
+    + [x]  添加padding
     + [ ]  重排优化
   + [ ] 动态库支持
     + [ ] 添加object的slot使用信息
     + [ ] 处理不同section的对齐
 + [ ] CFG生成工具
   + [x] LLVM icall
+  + [ ] C++ 虚函数
+  + [ ] switch 等其他

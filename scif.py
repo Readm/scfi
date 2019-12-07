@@ -28,6 +28,9 @@ def padding_to_label(bit_width,label):
 
 # Label based CFG, each target/branch has tags(labels)
 # Tags canbe strings, int ...
+# For each target: keyed by label
+# For each branch: keyed by debug_loc
+# add new read function for new formats
 class CFG():
     def __init__(self, target=dict(), branch=dict()):
         self.target=target # label-> [tags]
@@ -60,7 +63,6 @@ class CFG():
             new_key += ' '+' '.join(branch_loc.split(':')[1:3])
             self.branch[new_key]=self.branch[branch_loc]
             self.branch.pop(branch_loc)
-
 
 
 class SCFIAsm(AsmSrc):
@@ -165,7 +167,7 @@ if __name__ == '__main__':
     asm.mark_all_instructions(cfg=CFG.read_from_llvm('./testcase/cfg.txt'))
     asm.random_slot_allocation()
     #print(asm.cfi_info)
-    # for line in asm.lines:
-    #     if hasattr(line, 'tags'):
-    #         print(line)
-    #         print(line.tags)
+    for line in asm.lines:
+        if '.text' in line:
+            pprint(line)
+            pprint(asm.index_of_line(line))

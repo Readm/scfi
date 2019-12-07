@@ -10,8 +10,11 @@
 # Insert line
 
 class Line(str):
+    key_id = 0  # we need a unique id for each Line, otherwise we cannot distiguish different line with the same content
     def __init__(self,s):
         super(Line, self).__init__()
+        self._key_id = Line.key_id
+        Line.key_id +=1
         # self.type: 'empty' 'instruction' 'comment' 'directive' 'label'
 
         #TODO: we assume no /*...*/ comments, or we should remove them in AsmSrc.__init__
@@ -32,6 +35,13 @@ class Line(str):
         
         self.section_declaration=None
         self.moved=False
+
+    def __eq__(self, other):
+        if isinstance(other, Line):
+            return other and self._key_id == other._key_id
+        else:
+            return super(Line,self).__eq__(other)
+        
 
     def strip_comment(self):
         return self.split('#')[0]
@@ -133,7 +143,15 @@ class AsmSrc(str):
         except KeyError:
             return None
             # raise Exception('Label %d not found' % label)
-        
+    
+    def index_of_line(self, line):
+        return self.lines.index(line)
+
+    def insert_before(self, insert_line, before_line):
+        self.lines.insert(self.index_of_line(before_line), insert_line)
+    
+    def insert_after(self, insert_line, after_line):
+        self.lines.insert(self.index_of_line(after_line)+1, insert_line)
 
     @classmethod
     def read_file(cls,path,src_path=''):
