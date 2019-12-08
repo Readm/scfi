@@ -109,6 +109,8 @@ class AsmSrc(str):
         self.lines = [Line(i) for i in self.split('\n')]
         self.labels = dict()
 
+        self.functions = []
+
         self.debug_file_number = dict()  # key: file value: number
         current_section = None
         current_loc = None
@@ -190,6 +192,20 @@ class AsmSrc(str):
                 if i > last_index+1:
                     self.lines.insert(last_index+1, self.lines.pop(i))
                 last_index += 1
+        pass
+
+    def function_list(self):
+        # find function by .type ****,@function
+        if not self.functions:
+            for line in self.lines:
+                if line.is_directive and line.get_directive_type()=='.type':
+                    args=line.strip_comment().replace('.type','').strip()
+                    function_name = args.split(',')[0].strip()
+                    self.functions.append(function_name)
+        else:
+            return self.functions
+
+    def cut_functions(self):
         pass
 
     @classmethod
