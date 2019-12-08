@@ -109,7 +109,7 @@ class AsmSrc(str):
         self.lines = [Line(i) for i in self.split('\n')]
         self.labels = dict()
 
-        self.functions = []
+        self.functions = []   # name strings
 
         self.debug_file_number = dict()  # key: file value: number
         current_section = None
@@ -125,6 +125,11 @@ class AsmSrc(str):
                 current_section = line
             elif line.is_instruction:
                 line.set_section_declaration(current_section)
+
+            if line.is_directive and line.get_directive_type()=='.type':
+                args=line.strip_comment().replace('.type','').strip()
+                function_name = args.split(',')[0].strip()
+                self.functions.append(function_name)
 
             if line.is_label:
                 self.labels[line.get_label()] = line
@@ -192,21 +197,39 @@ class AsmSrc(str):
                 if i > last_index+1:
                     self.lines.insert(last_index+1, self.lines.pop(i))
                 last_index += 1
-        pass
 
-    def function_list(self):
-        # find function by .type ****,@function
-        if not self.functions:
-            for line in self.lines:
-                if line.is_directive and line.get_directive_type()=='.type':
-                    args=line.strip_comment().replace('.type','').strip()
-                    function_name = args.split(',')[0].strip()
-                    self.functions.append(function_name)
-        else:
-            return self.functions
+    def get_function_lines(self,function_name,speculate='clang debug'):
+        # guess function beginning/ending is not reliable
+        # so use arg speculate to use different speculate information
+        if speculate == 'clang debug':
+            begin_index=end_index= self.index_of_line(self.find_label(function_name))
 
-    def cut_functions(self):
-        pass
+            # find comment 'Begin function' first
+            while '# -- Begin function' not in self.lines[begin_index]: begin_index -=1
+            # if before this line, it's a section declaration, include it
+            if self.lines[begin_index-1].is_section_directive: begin_index-=1
+            
+            # find comment 'End function'
+            while '# -- End function' not in self.lines[end_index]: end_index +=1
+            
+            function = self.lines[begin_index:end_index+1]
+            return function
+
+    # move lines and repair the section declaration
+    def move_function_before(self,lines,before_line):
+        self.move_lines_before(lines,before_line)
+        for line in lines:
+            if line.is_section_directive: return # exist a section declaration
+            if line.is_instruction:
+                self.insert_before(line.section_declaration,lines[0])
+        
+    def move_function_after(self,lines,after_line):
+        self.move_lines_after(lines,after_line)
+        for line in lines:
+            if line.is_section_directive: return # exist a section declaration
+            if line.is_instruction:
+                self.insert_before(line.section_declaration,lines[0])
+
 
     @classmethod
     def read_file(cls, path, src_path=''):

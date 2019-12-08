@@ -172,8 +172,9 @@ if __name__ == '__main__':
     asm.mark_all_instructions(cfg=CFG.read_from_llvm('./testcase/cfg.txt'))
     asm.random_slot_allocation()
     asm.move_file_directives_forward()
-    for line in asm.lines:
-        if line.is_debug_file_directive:
+    for line in asm.get_function_lines('spec_ungetc')[:10]:
+            print(line)
+    for line in asm.get_function_lines('spec_ungetc')[-5:]:
             print(line)
     # print(asm.cfi_info)
     # for line in asm.lines:
