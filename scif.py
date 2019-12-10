@@ -7,31 +7,67 @@ logging.basicConfig(
 logger = logging.getLogger('SCFI')
 
 
-def is_indirect_call(line, language='x86_at&t'):
-    # remember to add rules for more languages
-    return True if line.is_instruction and 'call' in line and '*' in line else False
+# language specified toolkits
+class ToolKit():
 
-# TODO: support indirect jump
+    def __init__(self, isa='x86', syntex='AT&T', landing_pad='.byte 0xF3, 0x0F, 0x1E, 0xFA', landing_pad_len=4):
+        self.isa = isa
+        self.syntex = syntex
+        self.landing_pad = landing_pad
+        self.landing_pad_len = landing_pad_len
 
+    def get_tmp_label(self):
+        tmp_label_count = 0
+        while True:
+            tmp_label_count += 1
+            yield('.scfi_tmp%d' % tmp_label_count)
 
-def is_indirect_jump(line, language='x86_at&t'):
-    return False
+    def is_indirect_call(self, line):
+        # remember to add rules for more languages
+        if self.isa == 'x86':
+            if self.syntex == 'AT&T':
+                return True if line.is_instruction and 'call' in line and '*' in line else False
+        raise Exception('Unsupported syntex or ISA')
 
+    # TODO: support indirect jump
+    def is_indirect_jump(self, line):
+        return False
 
-def is_indirect_branch(line, language='x86_at&t'):
-    return is_indirect_call(line, language='x86_at&t') or is_indirect_jump(line, language='x86_at&t')
+    def is_indirect_branch(self, line):
+        return self.is_indirect_call(line) or self.is_indirect_jump(line)
 
-# retrun a Line of .org
+    # retrun a Line of .org
+    def padding_to_slot(self, bit_width, slot):
+        return Line('\t.org ((.-0x%x-1)/(1<<%d)+1)*(1<<%d)+0x%x, 0x90 \t# pad to 0x%x, in width %d\n' %
+                    (slot, bit_width, bit_width, slot, slot, bit_width))
 
+    def padding_to_label(self, bit_width, label):
+        return Line('\t.org ((.-(%s%%(1<<%d))-1)/(1<<%d)+1)*(1<<%d)+(%s%%(1<<%d)), 0x90 \t# pad to %s, in width %d\n' %
+                    (label, bit_width, bit_width, bit_width, label, bit_width, label, bit_width))
 
-def padding_to_slot(bit_width, slot):
-    return Line('\t.org ((.-0x%x-1)/(1<<%d)+1)*(1<<%d)+0x%x, 0x90 \t# pad to 0x%x, in width %d\n' %
-                (slot, bit_width, bit_width, slot, slot, bit_width))
+    def get_landing_pad_line(self):
+        return Line('\t'+self.landing_pad)
 
+    def jump_label(self, label):
+        if self.isa == 'x86':
+            if self.syntex == 'AT&T':
+                return Line('\tjmp %s' % label)
+        raise Exception('Unsupported syntex or ISA')
 
-def padding_to_label(bit_width, label):
-    return Line('\t.org ((.-(%s%%(1<<%d))-1)/(1<<%d)+1)*(1<<%d)+(%s%%(1<<%d)), 0x90 \t# pad to %s, in width %d\n' %
-                (label, bit_width, bit_width, bit_width, label, bit_width, label, bit_width))
+    def landing_and_jump(self, label):
+        lines = []
+        lines.append(self.get_landing_pad_line())
+        lines.append(self.jump_label(label))
+        return lines
+
+    # a landing and jump, and skip them. used when in other codes
+    def skipped_landing_and_jump(self, label):
+        lines = []
+        tmp_label = self.get_tmp_label()
+        lines.append(self.jump_label(tmp_label))
+        lines.append(self.landing_and_jump(label))
+        lines.append(Line('%s:' % tmp_label))
+        return lines
 
 # Label based CFG, each target/branch has tags(labels)
 # Tags can be strings, int ...
@@ -84,6 +120,8 @@ class SCFIAsm(AsmSrc):
         self.marked_target_lst = []
         self.valid_tags = set()       # cfg contains more tags than our object
         self.tag_slot = dict()
+        self.label_address = dict()
+        self.label_size = dict()
 
         self.tmp_asm_path = '/tmp/scfi_tmp.s'
         self.tmp_obj_path = '/tmp/scfi_tmp.o'
@@ -91,9 +129,11 @@ class SCFIAsm(AsmSrc):
 
         self.update_debug_file_number(src_path)
 
+        self.toolkit = ToolKit()
+
     def prepare_and_count(self):
         for line in self.lines:
-            if is_indirect_branch(line):
+            if self.toolkit.is_indirect_branch(line):
                 self.branch_lst.append(line)
 
     def mark_all_instructions(self, cfg=None):
@@ -158,10 +198,40 @@ class SCFIAsm(AsmSrc):
         compile_err = p.stderr.read()
         if compile_err:
             raise Exception(compile_err)
-        c = 'objdump -d %s > %s' % (self.tmp_obj_path, self.tmp_dmp_path)
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, shell=True)
-        p.wait()
+        # cmd = 'objdump -d %s > %s' % (self.tmp_obj_path, self.tmp_dmp_path)
+        # p = subprocess.Popen(cmd, stderr=subprocess.PIPE, shell=True)
+        # p.wait()
+        # compile_err = p.stderr.read()
+        # if compile_err:
+        #     raise Exception(compile_err)
         logger.info('Finish compile.')
+
+    def read_tmp_label_addresses(self):
+        cmd = 'readelf -s %s' % self.tmp_obj_path
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, shell=True)
+        p.wait()
+        compile_err = p.stderr.read()
+        if compile_err:
+            raise Exception(compile_err)
+        output = p.stdout.readlines()
+        for line in output:
+            try:
+                info = line.split()
+                label = info[-1].decode('ascii')
+                address = info[1]
+                size = info[2]
+                _type = info[3]
+            except IndexError:
+                continue
+            if _type == b'FUNC':
+                self.label_address[label] = int(address, 16)
+                self.label_size[label] = int(size)
+            if _type == b'NOTYPE':
+                self.label_address[label] = int(address, 16)
+
+    def read_label_address(self, label):
+        return self.label_address[label]
 
 
 if __name__ == '__main__':
@@ -172,12 +242,6 @@ if __name__ == '__main__':
     asm.mark_all_instructions(cfg=CFG.read_from_llvm('./testcase/cfg.txt'))
     asm.random_slot_allocation()
     asm.move_file_directives_forward()
-    for line in asm.get_function_lines('spec_ungetc')[:10]:
-            print(line)
-    for line in asm.get_function_lines('spec_ungetc')[-5:]:
-            print(line)
-    # print(asm.cfi_info)
-    # for line in asm.lines:
-    #     if '.text' in line:
-    #         pprint(line)
-    #         pprint(asm.index_of_line(line))
+    asm.compile_tmp()
+    asm.read_tmp_label_addresses()
+    print(hex(asm.read_label_address('main')))
