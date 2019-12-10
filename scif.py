@@ -1,13 +1,23 @@
-from asmplayground import *
 from pprint import pprint
 import logging
 import subprocess
+
+
+from asmplayground import *
+from runspec import run_cycle
+
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('SCFI')
 
+# attributes set:
+# 'reserved_tags': we add the instruction with tags, but did not decide its slot
+# 'tags', 'slots'
 
 # language specified toolkits
+
+
 class ToolKit():
 
     def __init__(self, isa='x86', syntex='AT&T', landing_pad='.byte 0xF3, 0x0F, 0x1E, 0xFA', landing_pad_len=4):
@@ -15,12 +25,12 @@ class ToolKit():
         self.syntex = syntex
         self.landing_pad = landing_pad
         self.landing_pad_len = landing_pad_len
+        self.tmp_label_count = 0
 
-    def get_tmp_label(self):
-        tmp_label_count = 0
-        while True:
-            tmp_label_count += 1
-            yield('.scfi_tmp%d' % tmp_label_count)
+    def get_tmp_label(self, info=''):
+
+        self.tmp_label_count += 1
+        return '.scfi_tmp%d%s' % (self.tmp_label_count, info)
 
     def is_indirect_call(self, line):
         # remember to add rules for more languages
@@ -35,6 +45,9 @@ class ToolKit():
 
     def is_indirect_branch(self, line):
         return self.is_indirect_call(line) or self.is_indirect_jump(line)
+
+    def get_call_expr(self, line):
+        return line.strip_comment().split('*')[-1]
 
     # retrun a Line of .org
     def padding_to_slot(self, bit_width, slot):
@@ -68,6 +81,33 @@ class ToolKit():
         lines.append(self.landing_and_jump(label))
         lines.append(Line('%s:' % tmp_label))
         return lines
+
+    # branch -> branch in CFI
+    def modified_branch(self, line, type='', slot=[], reserved=True):
+        lines = []
+        if self.isa == 'x86':
+            if self.syntex == 'AT&T':
+                if type == 'replace_8_bits':
+                    call_expr = self.get_call_expr(line)
+                    if reserved:
+                        slot_line = Line('\tmov\t$0x0, %r11b')
+                        setattr(slot_line, 'reserved_tags', line.tags)
+                    else:
+                        slot_line = Line('\tmov\t$%s, %%r11b' % hex(slot[0]))
+                        #setattr(slot_line, 'slot', slot)
+                    lines.append(Line('\tmovq\t%s, %%rcx' % call_expr))
+                    lines.append(slot_line)
+                    lines.append(Line('\tcallq \t*%rcx'))
+                    return lines
+
+        raise Exception('Unsupported syntex or ISA')
+
+    def set_branch_slot(self, line, slot):
+        if self.isa == 'x86':
+            if self.syntex == 'AT&T':
+                if type == 'replace_8_bits':
+                    line.replace('0x0', hex(slot))
+
 
 # Label based CFG, each target/branch has tags(labels)
 # Tags can be strings, int ...
@@ -187,10 +227,10 @@ class SCFIAsm(AsmSrc):
             logger.debug('random_allocation:\t'+str(tag) +
                          ' -> \t'+hex(self.tag_slot[tag]))
 
-    def compile_tmp(self, cmd=''):
+    def compile_tmp(self, cmd='', update_label=True):
         logger.info('compiling...')
         with open(self.tmp_asm_path, 'w') as f:
-            f.write(self)
+            f.write(str(self))
         if not cmd:
             cmd = 'as %s -o %s' % (self.tmp_asm_path, self.tmp_obj_path)
         p = subprocess.Popen(cmd, stderr=subprocess.PIPE, shell=True)
@@ -204,9 +244,12 @@ class SCFIAsm(AsmSrc):
         # compile_err = p.stderr.read()
         # if compile_err:
         #     raise Exception(compile_err)
+        if update_label:
+            logger.info('updateing labels...')
+            self.update_tmp_label_addresses()
         logger.info('Finish compile.')
 
-    def read_tmp_label_addresses(self):
+    def update_tmp_label_addresses(self):
         cmd = 'readelf -s %s' % self.tmp_obj_path
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, shell=True)
@@ -233,15 +276,95 @@ class SCFIAsm(AsmSrc):
     def read_label_address(self, label):
         return self.label_address[label]
 
+    # only reorder target, not branches
+    # use insert or padding
+    # assumptions: targets are all (function) labels
+    #              each branch has only one tag
+    #              each target has only one tag
+    def only_reorder_targets(self, move_method='padding'):
+        # attributes set:
+        # first_met_tags = first time met a tag, which means use it nature slot
+        # met_tags = tags met already, which means use the slot equals to the first one
+
+        need_move = []
+        need_reprocessing_branches = []  # slot reserved
+        need_reprocessing_targets = []  # slot reserved
+        # modify all branches, and with slot reserved
+        for line in self.marked_branch_lst:
+            index = self.index_of_line(line)
+            for new_line in self.toolkit.modified_branch(self.lines.pop(index), type='replace_8_bits', reserved=True)[::-1]:
+                if hasattr(new_line, 'reserved_tags'):
+                    need_reprocessing_branches.append(new_line)
+                self.lines.insert(index, new_line)
+
+        allocated_tags = set()
+
+        self.marked_target_lst.sort(key=lambda x: self.index_of_line(x))
+        for line in self.marked_target_lst:
+            first_met_tags = []
+            met_tags = []
+            for tag in line.tags:
+                if tag not in allocated_tags:
+                    allocated_tags.add(tag)
+                    first_met_tags.append(tag)
+                else:
+                    met_tags.append(tag)
+
+            setattr(line, 'first_met_tags', first_met_tags)
+            setattr(line, 'met_tags', met_tags)
+
+            if not line.met_tags:  # all tags are un-allocated
+                for tag in line.first_met_tags:
+                    landing = self.toolkit.get_landing_pad_line()
+                    setattr(landing, 'reserved_tags', [tag])
+                    need_reprocessing_targets.append(landing)
+                    self.insert_after(landing, line)
+                    self.insert_after(Line('fsttag%s:' % str(tag)), line)
+            else:  # has allocated tag
+                if line.first_met_tags:  # has other un-allocated
+                    raise Exception('Not implemented')
+                elif len(line.met_tags) > 1:  # has multiple allocated tag
+                    raise Exception('Not implemented')
+                else:   # only one allocated tag
+                    setattr(line, 'align_to_tags', line.met_tags)
+                    need_move.append(line)
+
+        # until now all instructions are marked by:
+        # branch: reserved_tags
+        # target: reserved_tags, align_to
+
+        if move_method == 'padding':
+            for line in need_move:
+                if len(line.align_to_tags) > 1:
+                    raise Exception('Not implemented')
+                self.insert_after(self.toolkit.padding_to_label(
+                    self.slot_bit_width, 'fsttag%s' % line.align_to_tags[0]), line)
+                self.insert_after(self.toolkit.get_landing_pad_line(), line)
+
+        # compile and get the slots
+        self.compile_tmp()
+        for tag in self.valid_tags:
+            self.tag_slot[tag] = self.read_label_address(
+                'fsttag%s' % str(tag)) & ((1 << self.slot_bit_width)-1)
+
+        # update all slots
+        for line in need_reprocessing_branches:
+            self.toolkit.set_branch_slot(
+                line, self.tag_slot[line.reserved_tags[0]])
+        for line in need_reprocessing_targets:
+            pass
+
 
 if __name__ == '__main__':
     logger.setLevel(logging.DEBUG)
-    asm = SCFIAsm.read_file('./testcase/401.bzip.s',
-                            src_path='/home/readm/fast-cfi/401.bzip2/')
+    name = '400.perlbench'
+    filePath = '/home/readm/fast-cfi/workload/%s/work/fastcfi_final.s' % name
+    src_path = '/home/readm/fast-cfi/workload/%s/work/' % name
+    cfg_path = '/home/readm/fast-cfi/workload/%s/work/fastcfi.info' % name
+    asm = SCFIAsm.read_file(filePath, src_path=src_path)
     asm.prepare_and_count()
-    asm.mark_all_instructions(cfg=CFG.read_from_llvm('./testcase/cfg.txt'))
-    asm.random_slot_allocation()
+    asm.mark_all_instructions(cfg=CFG.read_from_llvm(cfg_path))
     asm.move_file_directives_forward()
+    asm.only_reorder_targets()
     asm.compile_tmp()
-    asm.read_tmp_label_addresses()
-    print(hex(asm.read_label_address('main')))
+    run_cycle(lst=[name])

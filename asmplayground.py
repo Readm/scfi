@@ -16,6 +16,7 @@ class Line(str):
         super(Line, self).__init__()
         self._key_id = Line.key_id
         Line.key_id += 1
+        self.index_cache=self._key_id
         # self.type: 'empty' 'instruction' 'comment' 'directive' 'label'
 
         # TODO: we assume no /*...*/ comments, or we should remove them in AsmSrc.__init__
@@ -43,6 +44,8 @@ class Line(str):
             return other and self._key_id == other._key_id
         else:
             return super(Line, self).__eq__(other)
+    def __hash__(self):
+        return hash(str(self)+str(self._key_id))
 
     def strip_comment(self):
         return self.split('#')[0]
@@ -101,8 +104,11 @@ class AsmSrc(str):
         super(AsmSrc, self).__init__()
         self.lines = [Line(i) for i in self.split('\n')]
         self.labels = dict()
+        
+        self.index_cache = dict() # for accelerate index_of_line
 
         self.functions = []   # name strings
+        self.line_hash_index = dict()
 
         self.debug_file_number = dict()  # key: file value: number
         current_section = None
@@ -133,7 +139,7 @@ class AsmSrc(str):
                 line.set_loc(current_loc)
 
     def __str__(self):
-        return ''.join([self.lines])
+        return '\n'.join(self.lines)
 
     def update_debug_file_number(self, path):
         # we add more keys to the debug_file_number to facilitate the mapping
@@ -158,7 +164,36 @@ class AsmSrc(str):
             return None
 
     def index_of_line(self, line):
-        return self.lines.index(line)
+            index = line.index_cache
+            if self.lines[index] == line: return index
+            else:
+                for index in range(len(self.lines)):
+                    self.lines[index].index_cache = index
+                    if self.lines[index]==line: return index
+        # lines_hash = hash(str(self))
+        # if lines_hash != self.lines_hash:
+        #     self.lines_hash = lines_hash
+        #     self.line_hash_index=dict()
+        #     index = 0
+        #     for l in self.lines:
+        #         self.line_hash_index[(str(l),l._key_id)]=index
+        #         if l == line: 
+        #             self.last_found_index = index
+        #             return index
+        # else:
+        #     try: 
+        #         return self.line_hash_index[line]
+        #     except KeyError:
+        #         try:
+        #             while True:
+        #                 index = self.last_found_index + 1
+        #                 if self.lines[index]== line:
+        #                     self.last_found_index=index
+        #                     return index
+        #         except IndexError:
+        #             raise IndexError
+
+        #return self.lines.index(line)
 
     def insert_before(self, insert_line, before_line):
         self.lines.insert(self.index_of_line(before_line), insert_line)

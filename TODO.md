@@ -8,8 +8,11 @@
     + [x]  读取CFG信息，标记所有相关指令
     + [x]  分配slot
       + [x] 随机allocation
-    + [x]  添加padding
     + [ ]  重排优化
+      + [x]  padding
+        + [ ]  optimizing
+      + [ ]  inserting
+        + [ ]  optimizing
   + [ ] 动态库支持
     + [ ] 添加object的slot使用信息
     + [ ] 处理不同section的对齐
