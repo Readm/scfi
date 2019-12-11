@@ -10,6 +10,10 @@
 	.file	8 "/usr/local/lib/clang/8.0.0/include/stddef.h"
 	.file	9 "/home/readm/fast-cfi/401.bzip2/crctable.c"
 	.file	10 "/home/readm/fast-cfi/401.bzip2/randtable.c"
+	.data
+scfi_call_tmp:
+	.8byte 0
+	.text
 	.p2align	4, 0x90         # -- Begin function spec_ungetc
 	.type	spec_ungetc,@function
 spec_ungetc:                            # @spec_ungetc

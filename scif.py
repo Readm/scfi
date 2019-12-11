@@ -4,7 +4,8 @@ import subprocess
 
 
 from asmplayground import *
-from runspec import run_cycle
+from runspec import run_cycle, link
+import os
 
 
 logging.basicConfig(
@@ -85,6 +86,7 @@ class ToolKit():
     # branch -> branch in CFI
     def modified_branch(self, line, type='', slot=[], reserved=True):
         lines = []
+        return [Line(str(line))]
         if self.isa == 'x86':
             if self.syntex == 'AT&T':
                 if type == 'replace_8_bits':
@@ -95,9 +97,9 @@ class ToolKit():
                     else:
                         slot_line = Line('\tmov\t$%s, %%r11b' % hex(slot[0]))
                         #setattr(slot_line, 'slot', slot)
-                    lines.append(Line('\tmovq\t%s, %%rcx' % call_expr))
+                    lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
                     lines.append(slot_line)
-                    lines.append(Line('\tcallq \t*%rcx'))
+                    lines.append(Line('\tcallq \t*%r11'))
                     return lines
 
         raise Exception('Unsupported syntex or ISA')
@@ -256,18 +258,11 @@ class SCFIAsm(AsmSrc):
         if not cmd:
             cmd = 'as %s -o %s' % (self.tmp_asm_path, self.tmp_obj_path)
         logger.debug(cmd)
-        p = subprocess.Popen(cmd, stderr=subprocess.PIPE, shell=True)
-        p.wait()
+        p=subprocess.run(cmd, stderr=subprocess.PIPE, shell=True)
         logger.debug('end: '+cmd)
-        compile_err = p.stderr.read()
+        compile_err = p.stderr.decode('utf-8')
         if compile_err:
             raise Exception(compile_err)
-        # cmd = 'objdump -d %s > %s' % (self.tmp_obj_path, self.tmp_dmp_path)
-        # p = subprocess.Popen(cmd, stderr=subprocess.PIPE, shell=True)
-        # p.wait()
-        # compile_err = p.stderr.read()
-        # if compile_err:
-        #     raise Exception(compile_err)
         if update_label:
             logger.info('updateing labels...')
             self.update_tmp_label_addresses()
@@ -313,6 +308,7 @@ class SCFIAsm(AsmSrc):
         # modify all branches, and with slot reserved
         for line in self.marked_branch_lst:
             prev = line.prev
+            self.unlink_line(line)
             for new_line in self.toolkit.modified_branch(line, type='replace_8_bits', reserved=True)[::-1]:
                 if hasattr(new_line, 'reserved_tags'):
                     need_reprocessing_branches.append(new_line)
@@ -378,14 +374,22 @@ class SCFIAsm(AsmSrc):
 
 
 if __name__ == '__main__':
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     name = '400.perlbench'
     filePath = '/home/readm/fast-cfi/workload/%s/work/fastcfi_final.s' % name
     src_path = '/home/readm/fast-cfi/workload/%s/work/' % name
     cfg_path = '/home/readm/fast-cfi/workload/%s/work/fastcfi.info' % name
     asm = SCFIAsm.read_file(filePath, src_path=src_path)
+    asm.tmp_asm_path=src_path+'scfi_tmp.s'
+    asm.tmp_obj_path=src_path+'scfi_tmp.o'
+    asm.tmp_dmp_path=src_path+'scfi_tmp.dump'
+
     asm.prepare_and_count()
     asm.mark_all_instructions(cfg=CFG.read_from_llvm(cfg_path))
     asm.move_file_directives_forward()
-    asm.only_move_targets()
-    run_cycle(lst=[name])
+    #asm.only_move_targets()
+    os.chdir(src_path)
+    asm.compile_tmp()
+    link(asm.tmp_obj_path, src_path+'scfi_tmp')
+
+    run_cycle(size='test',filelst=['./scfi_tmp'],lst=[name])

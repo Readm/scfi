@@ -10,6 +10,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('SCFI')
 
+
 class Line(str):
     key_id = 0  # we need a unique id for each Line, otherwise we cannot distinguish different line with the same content
 
@@ -20,7 +21,6 @@ class Line(str):
         # index_of_line is too slow, we add a two-way link list
         self.prev = None
         self.next = None
-        self.index_cache=self._key_id
         # self.type: 'empty' 'instruction' 'comment' 'directive' 'label'
 
         # TODO: we assume no /*...*/ comments, or we should remove them in AsmSrc.__init__
@@ -106,12 +106,12 @@ class AsmSrc(str):
         super(AsmSrc, self).__init__()
         self.lines = [Line(i) for i in self.split('\n')]
         for index in range(len(self.lines)-1):
-            self.lines[index].next=self.lines[index+1]
-            self.lines[index+1].prev=self.lines[index]
+            self.lines[index].next = self.lines[index+1]
+            self.lines[index+1].prev = self.lines[index]
         self.HEAD = self.lines[0]
         self.labels = dict()
-        self.label_list = [] # in order
-        
+        self.label_list = []  # in order
+
         self.functions = []   # name strings
         self.line_hash_index = dict()
 
@@ -145,17 +145,16 @@ class AsmSrc(str):
                 line.set_loc(current_loc)
 
     def __str__(self):
-        output=''
+        output = ''
         for line in self.traverse_lines():
-            output+=str(line)+'\n'
+            output += str(line)+'\n'
         return output
 
-    
     def traverse_lines(self):
-        p=self.HEAD
-        while p.next:
+        p = self.HEAD
+        while p.next != None:
             yield p
-            p=p.next
+            p = p.next
         yield p
 
     def update_debug_file_number(self, path):
@@ -181,22 +180,21 @@ class AsmSrc(str):
             return None
 
     def insert_before(self, insert_line, before_line):
-        insert_line.next=before_line
-        insert_line.prev=before_line.prev
+        insert_line.next = before_line
+        insert_line.prev = before_line.prev
         insert_line.prev.next = insert_line
-        before_line.prev=insert_line
-
+        before_line.prev = insert_line
 
     def insert_after(self, insert_line, after_line):
         insert_line.prev = after_line
         insert_line.next = after_line.next
         insert_line.next.prev = insert_line
         after_line.next = insert_line
-    
+
     def unlink_line(self, line):
         line.prev.next = line.next
         line.next.prev = line.prev
-    
+
     def del_line(self, line):
         del line
 
@@ -226,9 +224,8 @@ class AsmSrc(str):
             if line.is_debug_file_directive:
                 if last_one and last_one.next != line:
                     self.unlink_line(line)
-                    self.insert_after(line,last_one)
+                    self.insert_after(line, last_one)
                 last_one = line
-    
 
     def get_function_lines(self, function_name, speculate='clang debug'):
         # guess function beginning/ending is not reliable
@@ -247,11 +244,11 @@ class AsmSrc(str):
             while '# -- End function' not in end_line:
                 end_line = end_line.next
 
-            function=[]
+            function = []
             p = begin_line
             while p != end_line.next:
                 function.append(p)
-                p=p.next
+                p = p.next
             return function
 
     # move lines and repair the section declaration
@@ -280,10 +277,3 @@ class AsmSrc(str):
             asm = cls(f.read())
             asm.update_debug_file_number(src_path)
             return asm
-
-
-if __name__ == "__main__":
-    asm = AsmSrc.read_file('./testcase/401.bzip.s')
-    for line in asm.lines:
-        if line.is_instruction and 'call' in line:
-            print(line)
