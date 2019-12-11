@@ -86,7 +86,6 @@ class ToolKit():
     # branch -> branch in CFI
     def modified_branch(self, line, type='', slot=[], reserved=True):
         lines = []
-        return [Line(str(line))]
         if self.isa == 'x86':
             if self.syntex == 'AT&T':
                 if type == 'replace_8_bits':
@@ -283,7 +282,7 @@ class SCFIAsm(AsmSrc):
                 continue
             if _type == 'FUNC':
                 self.label_address[label] = int(address, 16)
-                self.label_size[label] = int(size)
+                self.label_size[label] = int(size, 16 if '0x' in size else 10)
             if _type == 'NOTYPE':
                 self.label_address[label] = int(address, 16)
 
@@ -354,7 +353,7 @@ class SCFIAsm(AsmSrc):
             for line in need_move:
                 if len(line.align_to_tags) > 1:
                     raise Exception('Not implemented')
-                self.insert_after(self.toolkit.padding_to_label(
+                self.insert_before(self.toolkit.padding_to_label(
                     self.slot_bit_width, 'fsttag%s' % line.align_to_tags[0]), line)
                 self.insert_after(self.toolkit.get_landing_pad_line(), line)
         
@@ -372,6 +371,7 @@ class SCFIAsm(AsmSrc):
         for line in need_reprocessing_targets:
             pass
 
+        # verify slots
 
 if __name__ == '__main__':
     logger.setLevel(logging.DEBUG)
@@ -387,7 +387,7 @@ if __name__ == '__main__':
     asm.prepare_and_count()
     asm.mark_all_instructions(cfg=CFG.read_from_llvm(cfg_path))
     asm.move_file_directives_forward()
-    #asm.only_move_targets()
+    asm.only_move_targets()
     os.chdir(src_path)
     asm.compile_tmp()
     link(asm.tmp_obj_path, src_path+'scfi_tmp')

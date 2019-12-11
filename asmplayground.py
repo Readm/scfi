@@ -25,7 +25,7 @@ class Line(str):
 
         # TODO: we assume no /*...*/ comments, or we should remove them in AsmSrc.__init__
         if "/*" in self:
-            raise Exception('Not supported comment')
+            logger.warn('Not supported comment: /*...*/')
 
         first_char = self.lstrip()[:1]
         last_char = self.strip_comment().rstrip()[-1:]
