@@ -5,6 +5,7 @@
 
 import logging
 import subprocess
+import copy
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('SCFI')
@@ -16,6 +17,9 @@ class Line(str):
         super(Line, self).__init__()
         self._key_id = Line.key_id
         Line.key_id += 1
+        # index_of_line is too slow, we add a two-way link list
+        self.prev = None
+        self.next = None
         self.index_cache=self._key_id
         # self.type: 'empty' 'instruction' 'comment' 'directive' 'label'
 
@@ -44,8 +48,6 @@ class Line(str):
             return other and self._key_id == other._key_id
         else:
             return super(Line, self).__eq__(other)
-    def __hash__(self):
-        return hash(str(self)+str(self._key_id))
 
     def strip_comment(self):
         return self.split('#')[0]
@@ -103,10 +105,13 @@ class AsmSrc(str):
     def __init__(self, s):
         super(AsmSrc, self).__init__()
         self.lines = [Line(i) for i in self.split('\n')]
+        for index in range(len(self.lines)-1):
+            self.lines[index].next=self.lines[index+1]
+            self.lines[index+1].prev=self.lines[index]
+        self.HEAD = self.lines[0]
         self.labels = dict()
+        self.label_list = [] # in order
         
-        self.index_cache = dict() # for accelerate index_of_line
-
         self.functions = []   # name strings
         self.line_hash_index = dict()
 
@@ -131,6 +136,7 @@ class AsmSrc(str):
                 self.functions.append(function_name)
 
             if line.is_label:
+                self.label_list.append(line)
                 self.labels[line.get_label()] = line
 
             if line.is_loc_directive:
@@ -139,7 +145,18 @@ class AsmSrc(str):
                 line.set_loc(current_loc)
 
     def __str__(self):
-        return '\n'.join(self.lines)
+        output=''
+        for line in self.traverse_lines():
+            output+=str(line)+'\n'
+        return output
+
+    
+    def traverse_lines(self):
+        p=self.HEAD
+        while p.next:
+            yield p
+            p=p.next
+        yield p
 
     def update_debug_file_number(self, path):
         # we add more keys to the debug_file_number to facilitate the mapping
@@ -160,91 +177,81 @@ class AsmSrc(str):
         try:
             return self.labels[label]
         except KeyError:
-            logger.warn('label %s not found' % label)
+            logger.debug()('label %s not found' % label)
             return None
 
-    def index_of_line(self, line):
-            index = line.index_cache
-            if self.lines[index] == line: return index
-            else:
-                for index in range(len(self.lines)):
-                    self.lines[index].index_cache = index
-                    if self.lines[index]==line: return index
-        # lines_hash = hash(str(self))
-        # if lines_hash != self.lines_hash:
-        #     self.lines_hash = lines_hash
-        #     self.line_hash_index=dict()
-        #     index = 0
-        #     for l in self.lines:
-        #         self.line_hash_index[(str(l),l._key_id)]=index
-        #         if l == line: 
-        #             self.last_found_index = index
-        #             return index
-        # else:
-        #     try: 
-        #         return self.line_hash_index[line]
-        #     except KeyError:
-        #         try:
-        #             while True:
-        #                 index = self.last_found_index + 1
-        #                 if self.lines[index]== line:
-        #                     self.last_found_index=index
-        #                     return index
-        #         except IndexError:
-        #             raise IndexError
-
-        #return self.lines.index(line)
-
     def insert_before(self, insert_line, before_line):
-        self.lines.insert(self.index_of_line(before_line), insert_line)
+        insert_line.next=before_line
+        insert_line.prev=before_line.prev
+        insert_line.prev.next = insert_line
+        before_line.prev=insert_line
+
 
     def insert_after(self, insert_line, after_line):
-        self.lines.insert(self.index_of_line(after_line)+1, insert_line)
+        insert_line.prev = after_line
+        insert_line.next = after_line.next
+        insert_line.next.prev = insert_line
+        after_line.next = insert_line
+    
+    def unlink_line(self, line):
+        line.prev.next = line.next
+        line.next.prev = line.prev
+    
+    def del_line(self, line):
+        del line
 
-    # TODO: make moves faster: it calls index_of_line too many times
+    def sort_lines(self, lines):
+        new_lst = []
+        for line in self.traverse_lines():
+            if line in lines:
+                new_lst.append(line)
+        return new_lst
+
     def move_lines_before(self, line_lst, before_line):
         for line in line_lst:
-            self.lines.remove(line)
+            self.unlink(line)
         for line in line_lst:
             self.insert_before(line, before_line)
 
     def move_lines_after(self, line_lst, after_line):
         for line in line_lst:
-            self.lines.remove(line)
+            self.unlink(line)
         for line in line_lst:
             self.insert_after(line, after_line)
 
     def move_file_directives_forward(self):
         # move so that all .loc will not meet undeclared file
-        last_index = 0
-        for i in range(len(self.lines)):
-            if self.lines[i].is_debug_file_directive:
-                if not last_index:
-                    last_index = i
-                    continue
-                if i > last_index+1:
-                    self.lines.insert(last_index+1, self.lines.pop(i))
-                last_index += 1
+        last_one = None
+        for line in self.traverse_lines():
+            if line.is_debug_file_directive:
+                if last_one and last_one.next != line:
+                    self.unlink_line(line)
+                    self.insert_after(line,last_one)
+                last_one = line
+    
 
     def get_function_lines(self, function_name, speculate='clang debug'):
         # guess function beginning/ending is not reliable
         # so use arg speculate to use different speculate information
         if speculate == 'clang debug':
-            begin_index = end_index = self.index_of_line(
-                self.find_label(function_name))
+            begin_line = end_line = self.find_label(function_name)
 
             # find comment 'Begin function' first
-            while '# -- Begin function' not in self.lines[begin_index]:
-                begin_index -= 1
+            while '# -- Begin function' not in begin_line:
+                begin_line = begin_line.prev
             # if before this line, it's a section declaration, include it
-            if self.lines[begin_index-1].is_section_directive:
-                begin_index -= 1
+            if begin_line.prev.is_section_directive:
+                begin_index = begin_index.prev
 
             # find comment 'End function'
-            while '# -- End function' not in self.lines[end_index]:
-                end_index += 1
+            while '# -- End function' not in end_line:
+                end_line = end_line.next
 
-            function = self.lines[begin_index:end_index+1]
+            function=[]
+            p = begin_line
+            while p != end_line.next:
+                function.append(p)
+                p=p.next
             return function
 
     # move lines and repair the section declaration
@@ -254,7 +261,8 @@ class AsmSrc(str):
             if line.is_section_directive:
                 return  # exist a section declaration
             if line.is_instruction:
-                self.insert_before(line.section_declaration, lines[0])
+                declare = copy.deepcopy(line.section_declaration)
+                self.insert_before(declare, lines[0])
 
     def move_function_after(self, lines, after_line):
         self.move_lines_after(lines, after_line)
@@ -262,10 +270,12 @@ class AsmSrc(str):
             if line.is_section_directive:
                 return  # exist a section declaration
             if line.is_instruction:
-                self.insert_before(line.section_declaration, lines[0])
+                declare = copy.deepcopy(line.section_declaration)
+                self.insert_before(declare, lines[0])
 
     @classmethod
     def read_file(cls, path, src_path=''):
+        logger.info('Loading %s' % path)
         with open(path) as f:
             asm = cls(f.read())
             asm.update_debug_file_number(src_path)

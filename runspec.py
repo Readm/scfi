@@ -6,11 +6,18 @@ import subprocess,os
 spec_path = '/home/readm/SPEC2006'
 
 def get_fake_cmd(cmd):
-    os.chdir(spec_path)
-    c = '. ./shrc'
-    p=subprocess.Popen(c+';'+cmd,stdout=subprocess.PIPE,shell=True)
-    _str=p.stdout.read()
-    p.wait()
+    h = hash(cmd)
+    if os.path.exists('./cache/%s' % str(h)):
+        with open('/home/readm/scfi/cache/%s' % str(h),mode='rb') as f:
+            _str = f.read()
+    else:
+        os.chdir(spec_path)
+        c = '. ./shrc'
+        p=subprocess.Popen(c+';'+cmd,stdout=subprocess.PIPE,shell=True)
+        _str=p.stdout.read()
+        p.wait()
+        with open('/home/readm/scfi/cache/%s' % str(h), mode='wb') as f:
+            f.write(_str)
     return str(_str,encoding='utf-8')
 
 class spec_cmd():
@@ -66,11 +73,7 @@ def get_runspec_cmd(config='default',n=1,fake=True,target='int',noreportable=Tru
 
 def get_cmds(config='default',n=1,fake=True,target='int',noreportable=True):
     cmd = get_runspec_cmd(config=config, n=n, fake=fake, target=target, noreportable=noreportable)
-    pickle.dump(cmd, output, pickle.HIGHEST_PROTOCOL)
     return parse(get_fake_cmd(cmd))
-
-def filter_cmd(lst, name='', _type = 'build'):
-    pass
 
 def copy_data(path, size='ref'):
     # path = workload/name

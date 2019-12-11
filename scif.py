@@ -155,10 +155,11 @@ class SCFIAsm(AsmSrc):
         super().__init__(s)
         self.cfg = cfg
         self.slot_bit_width = 8
-        self.branch_lst = []
-        self.marked_branch_lst = []
+        self.branch_lst = [] # in order
+        self.marked_branch_lst = [] # in order
         self.marked_target_lst = []
-        self.valid_tags = set()       # cfg contains more tags than our object
+        self.valid_branch_tags = set()       # cfg contains more tags than our object
+        self.valid_target_tags = set()
         self.tag_slot = dict()
         self.label_address = dict()
         self.label_size = dict()
@@ -172,7 +173,7 @@ class SCFIAsm(AsmSrc):
         self.toolkit = ToolKit()
 
     def prepare_and_count(self):
-        for line in self.lines:
+        for line in self.traverse_lines():
             if self.toolkit.is_indirect_branch(line):
                 self.branch_lst.append(line)
 
@@ -189,7 +190,8 @@ class SCFIAsm(AsmSrc):
         logger.info('marked_targets: %d' % len(self.marked_target_lst))
         logger.info('cfg_branches: %d' % len(self.cfg.branch.keys()))
         logger.info('cfg_targets: %d' % len(self.cfg.target.keys()))
-        logger.info('valid tags: %d' % len(self.valid_tags))
+        logger.info('valid branch tags: %d' % len(self.valid_branch_tags))
+        logger.info('valid target tags: %d' % len(self.valid_target_tags))
 
     def mark_all_branches(self):
         for branch in self.branch_lst:
@@ -197,15 +199,35 @@ class SCFIAsm(AsmSrc):
                 setattr(branch, 'tags', self.cfg.branch[branch.debug_loc])
                 self.marked_branch_lst.append(branch)
                 for tag in self.cfg.branch[branch.debug_loc]:
-                    self.valid_tags.add(tag)
+                    self.valid_branch_tags.add(tag)
 
     def mark_all_targets(self):
-        for label in self.cfg.target.keys():
-            if self.find_label(label):
-                setattr(self.find_label(label), 'tags', self.cfg.target[label])
-                self.marked_target_lst.append(self.find_label(label))
+        for line in self.label_list:
+            label = line.get_label()
+            if line.get_label() in self.cfg.target.keys():
+                setattr(line, 'tags', self.cfg.target[label])
+                self.marked_target_lst.append(line)
                 for tag in self.cfg.target[label]:
-                    self.valid_tags.add(tag)
+                    self.valid_target_tags.add(tag)
+    @property
+    def inside_valid_tags(self):
+        return self.valid_branch_tags.intersection(self.valid_target_tags)
+    
+    def cut_one_side_tags(self):
+        logger.info('Cutting one side tags...')
+        for target in self.marked_target_lst:
+            target.tags=[i for i in target.tags if i in self.valid_branch_tags]
+        old = len(self.marked_target_lst)
+        self.marked_target_lst = [i for i in self.marked_target_lst if len(i.tags)>0]
+        new = len(self.marked_target_lst)
+        logger.debug('Marked targets: %d -> %d' % (old, new))
+
+        for branch in self.marked_branch_lst:
+            branch.tags=[i for i in branch.tags if i in self.valid_target_tags]
+        old = len(self.marked_branch_lst)
+        self.marked_branch_lst = [i for i in self.marked_branch_lst if len(i.tags)>0]
+        new = len(self.marked_branch_lst)
+        logger.debug('Marked branch: %d -> %d' % (old, new))
 
     def random_slot_allocation(self):
         # use hash, this allocation requires no compile
@@ -233,8 +255,10 @@ class SCFIAsm(AsmSrc):
             f.write(str(self))
         if not cmd:
             cmd = 'as %s -o %s' % (self.tmp_asm_path, self.tmp_obj_path)
+        logger.debug(cmd)
         p = subprocess.Popen(cmd, stderr=subprocess.PIPE, shell=True)
         p.wait()
+        logger.debug('end: '+cmd)
         compile_err = p.stderr.read()
         if compile_err:
             raise Exception(compile_err)
@@ -250,27 +274,22 @@ class SCFIAsm(AsmSrc):
         logger.info('Finish compile.')
 
     def update_tmp_label_addresses(self):
-        cmd = 'readelf -s %s' % self.tmp_obj_path
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, shell=True)
-        p.wait()
-        compile_err = p.stderr.read()
-        if compile_err:
-            raise Exception(compile_err)
-        output = p.stdout.readlines()
-        for line in output:
+        cmd = ['readelf', '-s', self.tmp_obj_path]
+        logger.debug(' '.join(cmd))
+        output=subprocess.run(cmd, stdout=subprocess.PIPE).stdout.decode('utf-8')
+        for line in output.split('\n'):
             try:
                 info = line.split()
-                label = info[-1].decode('ascii')
+                label = info[-1]
                 address = info[1]
                 size = info[2]
                 _type = info[3]
             except IndexError:
                 continue
-            if _type == b'FUNC':
+            if _type == 'FUNC':
                 self.label_address[label] = int(address, 16)
                 self.label_size[label] = int(size)
-            if _type == b'NOTYPE':
+            if _type == 'NOTYPE':
                 self.label_address[label] = int(address, 16)
 
     def read_label_address(self, label):
@@ -281,25 +300,26 @@ class SCFIAsm(AsmSrc):
     # assumptions: targets are all (function) labels
     #              each branch has only one tag
     #              each target has only one tag
-    def only_reorder_targets(self, move_method='padding'):
+    def only_move_targets(self, move_method='padding'):
         # attributes set:
         # first_met_tags = first time met a tag, which means use it nature slot
         # met_tags = tags met already, which means use the slot equals to the first one
+        logger.info('Only_move_targets, move method: %s' % move_method)
+        self.cut_one_side_tags()
 
         need_move = []
         need_reprocessing_branches = []  # slot reserved
         need_reprocessing_targets = []  # slot reserved
         # modify all branches, and with slot reserved
         for line in self.marked_branch_lst:
-            index = self.index_of_line(line)
-            for new_line in self.toolkit.modified_branch(self.lines.pop(index), type='replace_8_bits', reserved=True)[::-1]:
+            prev = line.prev
+            for new_line in self.toolkit.modified_branch(line, type='replace_8_bits', reserved=True)[::-1]:
                 if hasattr(new_line, 'reserved_tags'):
                     need_reprocessing_branches.append(new_line)
-                self.lines.insert(index, new_line)
+                self.insert_after(new_line, prev)
 
         allocated_tags = set()
 
-        self.marked_target_lst.sort(key=lambda x: self.index_of_line(x))
         for line in self.marked_target_lst:
             first_met_tags = []
             met_tags = []
@@ -329,6 +349,7 @@ class SCFIAsm(AsmSrc):
                     setattr(line, 'align_to_tags', line.met_tags)
                     need_move.append(line)
 
+        logger.debug('All instructions marked.')
         # until now all instructions are marked by:
         # branch: reserved_tags
         # target: reserved_tags, align_to
@@ -340,10 +361,11 @@ class SCFIAsm(AsmSrc):
                 self.insert_after(self.toolkit.padding_to_label(
                     self.slot_bit_width, 'fsttag%s' % line.align_to_tags[0]), line)
                 self.insert_after(self.toolkit.get_landing_pad_line(), line)
-
+        
+        logger.debug('Moving...')
         # compile and get the slots
         self.compile_tmp()
-        for tag in self.valid_tags:
+        for tag in self.inside_valid_tags:
             self.tag_slot[tag] = self.read_label_address(
                 'fsttag%s' % str(tag)) & ((1 << self.slot_bit_width)-1)
 
@@ -356,7 +378,7 @@ class SCFIAsm(AsmSrc):
 
 
 if __name__ == '__main__':
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     name = '400.perlbench'
     filePath = '/home/readm/fast-cfi/workload/%s/work/fastcfi_final.s' % name
     src_path = '/home/readm/fast-cfi/workload/%s/work/' % name
@@ -365,6 +387,5 @@ if __name__ == '__main__':
     asm.prepare_and_count()
     asm.mark_all_instructions(cfg=CFG.read_from_llvm(cfg_path))
     asm.move_file_directives_forward()
-    asm.only_reorder_targets()
-    asm.compile_tmp()
+    asm.only_move_targets()
     run_cycle(lst=[name])
