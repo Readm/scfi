@@ -97,7 +97,7 @@ class ToolKit():
                         slot_line = Line('\tmov\t$%s, %%r11b' % hex(slot[0]))
                         #setattr(slot_line, 'slot', slot)
                     lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
-                    lines.append(slot_line)
+                    # tmp del lines.append(slot_line)
                     lines.append(Line('\tcallq \t*%r11'))
                     return lines
 
@@ -109,6 +109,40 @@ class ToolKit():
                 if type == 'replace_8_bits':
                     line.replace('0x0', hex(slot))
 
+    # used in "insert" moving
+    # mark several lines as "pinned_island", insert them into codes
+    # they will "float" in the code, but always "pin" in the address
+    # a normal form:
+    # scfi_island_begin_target:
+    #     jump island_end
+    #     .org (padding to ...)
+    # target:
+    #     landding_pad
+    #     jump scfi_real_target
+    # scfi_island_end_target:    
+    def build_target_island(self, ori_line, padding_line):
+        label = ori_line.get_label()
+        modified_label = 'scfi_real_'+label
+        ori_line.replace(label, modified_label)
+
+        lines=[]
+        lines.append(Line('scfi_island_begin_%s:'%label))
+        lines.append(Line('\tjmp\tscfi_island_end_%s'%label))
+        lines.append(padding_line)
+        lines.append(Line('%s:'%label))
+        lines.append(self.get_landing_pad_line())
+        lines.append(Line('\tjmp\t%s'%modified_label))
+        lines.append(Line('scfi_island_end_%s:'%label))
+
+        setattr(lines[0],'island_label', label)
+        setattr(lines[0],'island_end', lines[-1])
+        setattr(lines[0],'padding_line',padding_line)
+        
+        for line in lines:
+            setattr(line, 'on_island', True)
+        return lines
+
+        
 
 # Label based CFG, each target/branch has tags(labels)
 # Tags can be strings, int ...
@@ -261,7 +295,7 @@ class SCFIAsm(AsmSrc):
         logger.debug('end: '+cmd)
         compile_err = p.stderr.decode('utf-8')
         if compile_err:
-            raise Exception(compile_err)
+            logger.warn(compile_err)
         if update_label:
             logger.info('updateing labels...')
             self.update_tmp_label_addresses()
@@ -349,6 +383,7 @@ class SCFIAsm(AsmSrc):
         # branch: reserved_tags
         # target: reserved_tags, align_to
 
+        logger.debug('Moving...')
         if move_method == 'padding':
             for line in need_move:
                 if len(line.align_to_tags) > 1:
@@ -356,8 +391,15 @@ class SCFIAsm(AsmSrc):
                 self.insert_before(self.toolkit.padding_to_label(
                     self.slot_bit_width, 'fsttag%s' % line.align_to_tags[0]), line)
                 self.insert_after(self.toolkit.get_landing_pad_line(), line)
+        elif move_method == 'insert':
+            for line in need_move:
+                if len(line.align_to_tags) > 1:
+                    raise Exception('Not implemented')
+                padding_line = self.toolkit.padding_to_label(self.slot_bit_width, 'fsttag%s' % line.align_to_tags[0])
+                island = self.toolkit.build_target_island(line,padding_line=padding_line)
+                
+
         
-        logger.debug('Moving...')
         # compile and get the slots
         self.compile_tmp()
         for tag in self.inside_valid_tags:
@@ -371,7 +413,7 @@ class SCFIAsm(AsmSrc):
         for line in need_reprocessing_targets:
             pass
 
-        # verify slots
+
 
 if __name__ == '__main__':
     logger.setLevel(logging.DEBUG)
