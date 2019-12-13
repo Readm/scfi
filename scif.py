@@ -319,14 +319,14 @@ class SCFIAsm(AsmSrc):
             if self.label_address[function] <= address and self.label_address[function]+self.label_size[function] >= address: return function
         return None
     
-    # mark all basic blocks in a function, return all tmp labels
+    # mark all basic blocks in a function, return all tmp label lines
     def mark_function_basic_blocks(self, function_name):
         lines=self.get_function_lines(function_name)
         tmp_labels=[]
         for line in lines:
             if self.toolkit.is_control_transfer(line):
-                tmp_label = self.toolkit.get_tmp_label()
-                self.insert_after(Line(tmp_label+':'))
+                tmp_label = Line(self.toolkit.get_tmp_label()+':')
+                self.insert_after(tmp_label)
         return tmp_labels
     
     def insert_island(self, island, target_label, slot=None, align_label=''):
@@ -348,9 +348,12 @@ class SCFIAsm(AsmSrc):
         tmp_labels=self.mark_function_basic_blocks(function_name)
         self.compile_tmp(update_label=True)
         max_label = function_name
-        for tmp_label in tmp_labels:
-            if self.label_address[tmp_label] < ideal_place and self.label_address[tmp_label] > self.label_address[function_name]:
-                max_label = tmp_label
+        for tmp_label_line in tmp_labels:
+            if self.label_address[tmp_label_line.get_label()] < ideal_place and self.label_address[tmp_label_line.get_label()] > self.label_address[function_name]:
+                max_label = tmp_label_line
+        
+        for line in island:
+            self.insert_after(line, max_label)
         
 
 
