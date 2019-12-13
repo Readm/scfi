@@ -41,7 +41,7 @@ class Line(str):
             self.type = 'instruction'
 
         self.section_declaration = None
-        self.moved = False
+        self.new_str = ''
 
     def __eq__(self, other):
         if isinstance(other, Line):
@@ -49,8 +49,20 @@ class Line(str):
         else:
             return super(Line, self).__eq__(other)
 
+    def set_str(self, s):
+        self.new_str = s
+    
+    def __str__(self):
+        if self.new_str: return str(self.new_str)
+        return super().__str__()
+
     def strip_comment(self):
         return self.split('#')[0]
+
+    def get_opcode(self):
+        if self.is_instruction:
+            return self.split()[0]
+
 
     @property
     def is_empty(self): return self.type == 'empty'
@@ -277,3 +289,12 @@ class AsmSrc(str):
             asm = cls(f.read())
             asm.update_debug_file_number(src_path)
             return asm
+
+if __name__ == '__main__':
+    asm=AsmSrc.read_file('./testcase/401.bzip.s')
+    s=set()
+    for line in asm.traverse_lines():
+        if line.get_opcode()==None: continue
+        s.add(line.get_opcode())
+    from pprint import pprint
+    pprint(s)

@@ -28,10 +28,23 @@ class ToolKit():
         self.landing_pad_len = landing_pad_len
         self.tmp_label_count = 0
 
+        if self.isa == 'x86': 
+            self.island_length = 11 # insert island length, the worst case
+            self.island_head = 5 # length from island begin to landing pad, the worst case
+
     def get_tmp_label(self, info=''):
 
         self.tmp_label_count += 1
         return '.scfi_tmp%d%s' % (self.tmp_label_count, info)
+
+    def is_control_transfer(self, line):
+        if self.isa=='x86':
+            op = line.get_opcode()
+            if not op: return False
+            if 'ret' in op: return True
+            if op.startswith('j') : return True
+            if 'call' in op: return True
+            return False
 
     def is_indirect_call(self, line):
         # remember to add rules for more languages
@@ -52,11 +65,11 @@ class ToolKit():
 
     # retrun a Line of .org
     def padding_to_slot(self, bit_width, slot):
-        return Line('\t.org ((.-0x%x-1)/(1<<%d)+1)*(1<<%d)+0x%x, 0x90 \t# pad to 0x%x, in width %d\n' %
+        return Line('\t.org ((.-0x%x-1)/(1<<%d)+1)*(1<<%d)+0x%x, 0x90 \t# pad to 0x%x, in width %d' %
                     (slot, bit_width, bit_width, slot, slot, bit_width))
 
     def padding_to_label(self, bit_width, label):
-        return Line('\t.org ((.-(%s%%(1<<%d))-1)/(1<<%d)+1)*(1<<%d)+(%s%%(1<<%d)), 0x90 \t# pad to %s, in width %d\n' %
+        return Line('\t.org ((.-(%s%%(1<<%d))-1)/(1<<%d)+1)*(1<<%d)+(%s%%(1<<%d)), 0x90 \t# pad to %s, in width %d' %
                     (label, bit_width, bit_width, bit_width, label, bit_width, label, bit_width))
 
     def get_landing_pad_line(self):
@@ -123,7 +136,7 @@ class ToolKit():
     def build_target_island(self, ori_line, padding_line):
         label = ori_line.get_label()
         modified_label = 'scfi_real_'+label
-        ori_line.replace(label, modified_label)
+        ori_line.set_str(ori_line.replace(label, modified_label))
 
         lines=[]
         lines.append(Line('scfi_island_begin_%s:'%label))
@@ -142,7 +155,6 @@ class ToolKit():
             setattr(line, 'on_island', True)
         return lines
 
-        
 
 # Label based CFG, each target/branch has tags(labels)
 # Tags can be strings, int ...
@@ -300,6 +312,92 @@ class SCFIAsm(AsmSrc):
             logger.info('updateing labels...')
             self.update_tmp_label_addresses()
         logger.info('Finish compile.')
+    
+    # return the function name the address in
+    def function_hold_address(self, address):
+        for function in self.label_size.keys(): # only functions have size
+            if self.label_address[function] <= address and self.label_address[function]+self.label_size[function] >= address: return function
+        return None
+    
+    # mark all basic blocks in a function, return all tmp labels
+    def mark_function_basic_blocks(self, function_name):
+        lines=self.get_function_lines(function_name)
+        tmp_labels=[]
+        for line in lines:
+            if self.toolkit.is_control_transfer(line):
+                tmp_label = self.toolkit.get_tmp_label()
+                self.insert_after(Line(tmp_label+':'))
+        return tmp_labels
+    
+    def insert_island(self, island, target_label, slot=None, align_label=''):
+        if not slot and not align_label: raise Exception("need a island align target")
+        if not slot and align_label: 
+            slot = self.read_label_address(align_label) % (1<<self.slot_bit_width)
+        
+        insert_slot = (slot-self.toolkit.island_head)%(1<<self.slot_bit_width)
+        ideal_place = target_label >> self.slot_bit_width <<self.slot_bit_width
+        ideal_place += insert_slot
+
+        # TODO: do not affect former islands
+        # if ideal_place > self.max_island_end: pass
+
+        function_name = self.function_hold_address(ideal_place)
+        if not function_name:
+            # TODO: no place for the island
+            raise Exception('No place for the island')
+        tmp_labels=self.mark_function_basic_blocks(function_name)
+        self.compile_tmp(update_label=True)
+        max_label = function_name
+        for tmp_label in tmp_labels:
+            if self.label_address[tmp_label] < ideal_place and self.label_address[tmp_label] > self.label_address[function_name]:
+                max_label = tmp_label
+        
+
+
+
+    # def move_island_step_forward(self, island, n):
+    #     island_end = island[-1]
+    #     insert_before = island_end.next
+    #     try:
+    #         for _ in range(n): 
+    #             while not insert_before.is_instruction: insert_before=insert_before.next
+    #             insert_before =  insert_before.next
+    #         for line in island:
+    #             self.unlink_line(line)
+    #             self.insert_before(line, insert_before)
+    #     except AttributeError:
+    #         logger.debug('No enough space to step island forward!')
+    
+    # def move_island_step_backward(self, island, n):
+    #     island_begin = island[0]
+    #     insert_after = island_begin.prev
+    #     try:
+    #         while not insert_after.is_instruction: insert_after= insert_after.prev
+    #         for _ in range(n+1):
+    #             while not insert_after.is_instruction: insert_after= insert_after.prev
+    #             insert_after = insert_after.prev
+    #         pass
+    #     except AttributeError:
+    #         logger.debug('No enough space to step island forward!')
+    
+    # def adjust_floating_labels(self, labels, island_dict):
+    #     self.compile_tmp(update_label=True)
+    #     tolerate_len = 8
+    #     max_round = 10
+    #     max_single_round = 10
+    #     for _r in range(max_round):
+    #         for label in labels:
+    #             last_gap=0
+    #             for _sr in range(max_single_round):
+    #                 begin_label = 'scfi_island_begin_' + label
+    #                 gap = self.label_address[label] - self.label_address[begin_label]
+    #                 if gap < tolerate_len: continue
+    #                 if self.toolkit.isa=='x86':
+    #                     step = gap/4
+    #                 else:
+    #                     raise Exception('define average instruction length')
+    #                 self.move_island_step_forward(island_dict[label],step)
+                
 
     def update_tmp_label_addresses(self):
         cmd = ['readelf', '-s', self.tmp_obj_path]
@@ -393,11 +491,20 @@ class SCFIAsm(AsmSrc):
                 self.insert_after(self.toolkit.get_landing_pad_line(), line)
         elif move_method == 'insert':
             for line in need_move:
+                logger.info('inserting...................................')
                 if len(line.align_to_tags) > 1:
                     raise Exception('Not implemented')
                 padding_line = self.toolkit.padding_to_label(self.slot_bit_width, 'fsttag%s' % line.align_to_tags[0])
                 island = self.toolkit.build_target_island(line,padding_line=padding_line)
-                
+                for island_land in island[::-1]:
+                    self.insert_after(island_land,line)
+            # compile, get padding len before the island and move instructions forward
+            floating_labels = [i.get_label() for i in need_move]
+            while floating_labels:
+                for l in floating_labels:
+
+        else:
+            raise Exception('Unknown move method %s' % move_method)
 
         
         # compile and get the slots
@@ -417,7 +524,7 @@ class SCFIAsm(AsmSrc):
 
 if __name__ == '__main__':
     logger.setLevel(logging.DEBUG)
-    name = '400.perlbench'
+    name = '456.hmmer'
     filePath = '/home/readm/fast-cfi/workload/%s/work/fastcfi_final.s' % name
     src_path = '/home/readm/fast-cfi/workload/%s/work/' % name
     cfg_path = '/home/readm/fast-cfi/workload/%s/work/fastcfi.info' % name
@@ -429,7 +536,7 @@ if __name__ == '__main__':
     asm.prepare_and_count()
     asm.mark_all_instructions(cfg=CFG.read_from_llvm(cfg_path))
     asm.move_file_directives_forward()
-    asm.only_move_targets()
+    asm.only_move_targets(move_method='insert')
     os.chdir(src_path)
     asm.compile_tmp()
     link(asm.tmp_obj_path, src_path+'scfi_tmp')
