@@ -112,7 +112,7 @@ class ToolKit():
                         setattr(slot_line, 'reserved_tags', line.tags)
                     else:
                         slot_line = Line('\tmov\t$%s, %%r11b' % hex(slot[0]))
-                        #setattr(slot_line, 'slot', slot)
+                        # setattr(slot_line, 'slot', slot)
                     lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
                     # tmp del lines.append(slot_line)
                     lines.append(Line('\tcallq \t*%r11'))
@@ -130,14 +130,13 @@ class ToolKit():
     # mark several lines as "pinned_island", insert them into codes, and modify the original label
     # they will "float" in the code, but always "pin" in the address
     # a normal form:
-    # scfi_island_begin_target:
+    # SCFIIBtarget:
     #     jump island_end
     #     .org (padding to ...)
     # target:
     #     landding_pad
-    #     jump scfi_real_target
-    # scfi_island_end_target:
-
+    #     jump .Rtarget
+    # SCFIIEtarget:
 
 
 # Label based CFG, each target/branch has tags(labels)
@@ -202,6 +201,8 @@ class SCFIAsm(AsmSrc):
         self.update_debug_file_number(src_path)
 
         self.toolkit = ToolKit()
+
+        self.max_slot_address = 0
 
     def prepare_and_count(self):
         for line in self.traverse_lines():
@@ -296,7 +297,7 @@ class SCFIAsm(AsmSrc):
         logger.debug('end: '+cmd)
         compile_err = p.stderr.decode('utf-8')
         if compile_err:
-            if 'Error:' in compile_err: 
+            if 'Error:' in compile_err:
                 raise Exception(compile_err)
             logger.warn(compile_err)
         if update_label:
@@ -318,32 +319,34 @@ class SCFIAsm(AsmSrc):
         for line in lines:
             if self.toolkit.is_control_transfer(line):
                 tmp_label = Line(self.toolkit.get_tmp_label()+':')
-                self.insert_after(tmp_label,line)
+                self.insert_after(tmp_label, line)
                 tmp_labels.append(tmp_label)
         return tmp_labels
-    
+
     def mark_all_basic_blocks(self):
         tmp_labels = []
         for line in self.traverse_lines():
             if self.toolkit.is_control_transfer(line):
                 tmp_label = Line(self.toolkit.get_tmp_label()+':')
-                self.insert_after(tmp_label,line)
+                self.insert_after(tmp_label, line)
                 tmp_labels.append(tmp_label)
-        self.basic_block_labels=tmp_labels
+        self.basic_block_labels = tmp_labels
 
     def build_target_island(self, ori_line, padding_line):
         label = ori_line.get_label()
-        modified_label = 'scfi_real_'+label
+        modified_label = 'SCFIR'+label
         ori_line.set_str(ori_line.replace(label, modified_label))
 
         lines = []
-        lines.append(Line('scfi_island_begin_%s:' % label))
-        lines.append(Line('\tjmp\tscfi_island_end_%s' % label))
+        lines.append(Line('SCFIIB%s:' % label))
+        lines.append(Line('\tjmp\tSCFIIE%s' % label))
         lines.append(padding_line)
-        lines.append(Line('%s:' % label))
+        l= Line('%s:' % label)
+        setattr(l, 'ori_label_line', True)
+        lines.append(l)
         lines.append(self.toolkit.get_landing_pad_line())
         lines.append(Line('\tjmp\t%s' % modified_label))
-        lines.append(Line('scfi_island_end_%s:' % label))
+        lines.append(Line('SCFIIE%s:' % label))
 
         setattr(lines[0], 'island_label', label)
         setattr(lines[0], 'island_end', lines[-1])
@@ -353,13 +356,13 @@ class SCFIAsm(AsmSrc):
         for line in self.traverse_from(ori_line):
             if line.is_directive:
                 if '.size' == line.get_directive_type():
-                    line.set_str(line.replace(label,modified_label))
+                    line.set_str(line.replace(label, modified_label))
                     break
-        
+
         for line in self.traverse_back_from(ori_line):
             if line.is_directive:
                 if '.type' == line.get_directive_type():
-                    line.set_str(line.replace(label,modified_label))
+                    line.set_str(line.replace(label, modified_label))
                     break
 
         for line in lines:
@@ -367,57 +370,84 @@ class SCFIAsm(AsmSrc):
         return lines
 
     def insert_ideal_place(self, target_label, slot=None, align_label=''):
-        target_label='scfi_real_'+target_label
-        if not (bool(slot) ^ bool(align_label)): raise Exception("Need ONE island align target")
+        target_label = 'SCFIR'+target_label
+        if not (bool(slot) ^ bool(align_label)): raise Exception(
+            "Need ONE island align target")
         if align_label:
             slot = self.read_label_address(
                 align_label) % (1 << self.slot_bit_width)
-        insert_slot = (slot-self.toolkit.island_head) % (1 << self.slot_bit_width)
+        insert_slot = (slot-self.toolkit.island_head) % (1 <<
+                       self.slot_bit_width)
         ideal_place = self.label_address[target_label] >> self.slot_bit_width << self.slot_bit_width
         ideal_place += insert_slot
-        if ideal_place < self.label_address[target_label]: ideal_place += 1<<self.slot_bit_width
+        if ideal_place < self.label_address[target_label]:
+            ideal_place += 1 << self.slot_bit_width
         return ideal_place
-        
-    def insert_island(self, island, ori_line, ideal_place):
 
-        search_begin = self.label_address['scfi_real_'+ori_line.get_label()]
+    def insert_island(self, island, search_begin, ideal_place):
+
         # TODO: do not affect former islands
         # if ideal_place > self.max_island_end: pass
 
-        last_label=None
+        last_label = None
         for tmp_label in self.basic_block_labels:
             address = self.label_address[tmp_label.get_label()]
-            if address <search_begin: continue
-            if address >ideal_place: break
-            last_label=tmp_label
-        
+            if address < search_begin: continue
+            if address > ideal_place: break
+            last_label = tmp_label
+
         logger.debug('ideal place \t%x' % ideal_place)
-        if hasattr(last_label.next,'on_island'):
-            exit()
-            self.insert_island(island, ori_line, ideal_place+(1<<self.slot_bit_width))
+        if not last_label:
+            self.insert_island(island, search_begin, ideal_place +
+                               (1 << self.slot_bit_width))
+        elif hasattr(last_label.next, 'on_island'):# or address < self.max_slot_address:
+            address = self.label_address[last_label.get_label()]
+            self.insert_island(island, search_begin, ideal_place +
+                               (1 << self.slot_bit_width))
         else:
-            logger.debug('final place \t%x' % self.label_address[last_label.get_label()])
+            address = self.label_address[last_label.get_label()]
+            self.max_slot_address = max(self.max_slot_address, address)
+            logger.debug('final place \t%x' % address)
+            # record where it should be
+            setattr(island[0], 'placed_address', address)
             self.insert_lines_after(island, last_label)
 
+    def fix_island_address(self, island):
+        begin_label = island[0].get_label()
+        address = self.label_address[begin_label]
+        right_address = island[0].placed_address
+        if address-right_address:# > (1 << (self.slot_bit_width-1)):  # need fix
+            logger.debug('Fixing')
+            for line in island:
+                if hasattr(line,'ori_label_line'): continue
+                self.unlink_line(line)
+            self.compile_tmp(update_label=True)
+            for line in island:
+                if not hasattr(line,'ori_label_line'): continue
+                self.unlink_line(line)
+            self.insert_island(island,right_address-(1<<self.slot_bit_width),address)
+
+
+
     def update_tmp_label_addresses(self):
-        cmd = ['readelf', '-s', self.tmp_obj_path]
+        cmd=['readelf', '-Ws', self.tmp_obj_path]
         logger.debug(' '.join(cmd))
-        output = subprocess.run(
+        output=subprocess.run(
             cmd, stdout=subprocess.PIPE).stdout.decode('utf-8')
         for line in output.split('\n'):
             try:
-                info = line.split()
-                label = info[-1]
-                address = info[1]
-                size = info[2]
-                _type = info[3]
+                info=line.split()
+                label=info[-1]
+                address=info[1]
+                size=info[2]
+                _type=info[3]
             except IndexError:
                 continue
             if _type == 'FUNC':
-                self.label_address[label] = int(address, 16)
-                self.label_size[label] = int(size, 16 if '0x' in size else 10)
+                self.label_address[label]=int(address, 16)
+                self.label_size[label]=int(size, 16 if '0x' in size else 10)
             if _type == 'NOTYPE':
-                self.label_address[label] = int(address, 16)
+                self.label_address[label]=int(address, 16)
 
     def read_label_address(self, label):
         return self.label_address[label]
@@ -427,30 +457,30 @@ class SCFIAsm(AsmSrc):
     # assumptions: targets are all (function) labels
     #              each branch has only one tag
     #              each target has only one tag
-    def only_move_targets(self, move_method='padding'):
+    def only_move_targets(self, move_method='padding', optimize_round=0):
         # attributes set:
         # first_met_tags = first time met a tag, which means use it nature slot
         # met_tags = tags met already, which means use the slot equals to the first one
         logger.info('Only_move_targets, move method: %s' % move_method)
         self.cut_one_side_tags()
 
-        need_move = []
-        need_reprocessing_branches = []  # slot reserved
-        need_reprocessing_targets = []  # slot reserved
+        need_move=[]
+        need_reprocessing_branches=[]  # slot reserved
+        need_reprocessing_targets=[]  # slot reserved
         # modify all branches, and with slot reserved
         for line in self.marked_branch_lst:
-            prev = line.prev
+            prev=line.prev
             self.unlink_line(line)
             for new_line in self.toolkit.modified_branch(line, type='replace_8_bits', reserved=True)[::-1]:
                 if hasattr(new_line, 'reserved_tags'):
                     need_reprocessing_branches.append(new_line)
                 self.insert_after(new_line, prev)
 
-        allocated_tags = set()
+        allocated_tags=set()
 
         for line in self.marked_target_lst:
-            first_met_tags = []
-            met_tags = []
+            first_met_tags=[]
+            met_tags=[]
             for tag in line.tags:
                 if tag not in allocated_tags:
                     allocated_tags.add(tag)
@@ -463,7 +493,7 @@ class SCFIAsm(AsmSrc):
 
             if not line.met_tags:  # all tags are un-allocated
                 for tag in line.first_met_tags:
-                    landing = self.toolkit.get_landing_pad_line()
+                    landing=self.toolkit.get_landing_pad_line()
                     setattr(landing, 'reserved_tags', [tag])
                     need_reprocessing_targets.append(landing)
                     self.insert_after(landing, line)
@@ -496,26 +526,45 @@ class SCFIAsm(AsmSrc):
             for line in need_move:
                 if len(line.align_to_tags) > 1:
                     raise Exception('Not implemented')
-                padding_line = self.toolkit.padding_to_label(
+                padding_line=self.toolkit.padding_to_label(
                     self.slot_bit_width, 'fsttag%s' % line.align_to_tags[0])
-                island = self.build_target_island(line, padding_line=padding_line)
+                island=self.build_target_island(
+                    line, padding_line=padding_line)
                 line_to_island[line]=island
-            while need_move:
+            move_lst=[x for x in need_move]
+            while move_lst:
+                logger.debug('Moving: %d/%d'%(len(need_move)-len(move_lst),len(need_move)))
                 self.compile_tmp()
                 line_ideal_place=dict()
-                for x in need_move:
-                    line_ideal_place[x]=self.insert_ideal_place( x.get_label(), align_label='fsttag%s' % x.align_to_tags[0])
-                need_move.sort(key=lambda x: line_ideal_place[x])
-                self.insert_island(line_to_island[need_move[0]],need_move[0],line_ideal_place[need_move[0]])
-                logger.debug('insert:%s'%need_move[0])
-                need_move.pop(0)
+                for x in move_lst:
+                    line_ideal_place[x]=self.insert_ideal_place(
+                        x.get_label(), align_label='fsttag%s' % x.align_to_tags[0])
+                move_lst.sort(key=lambda x: line_ideal_place[x])
+                search_begin=self.label_address['SCFIR' + \
+                    move_lst[0].get_label()]
+                self.insert_island(
+                    line_to_island[move_lst[0]], search_begin, line_ideal_place[move_lst[0]])
+                logger.debug('insert:%s' % move_lst[0])
+                move_lst.pop(0)
         else:
             raise Exception('Unknown move method %s' % move_method)
+
+
+        # optimization
+        for _ in range(optimize_round):
+            logger.info('Optimizing...')
+            self.compile_tmp()
+            if move_method == 'padding':
+                pass
+            elif move_method == 'insert':
+                for line in need_move:
+                    self.fix_island_address(line_to_island[line])
+
 
         # compile and get the slots
         self.compile_tmp()
         for tag in self.inside_valid_tags:
-            self.tag_slot[tag] = self.read_label_address(
+            self.tag_slot[tag]=self.read_label_address(
                 'fsttag%s' % str(tag)) & ((1 << self.slot_bit_width)-1)
 
         # update all slots
@@ -528,21 +577,23 @@ class SCFIAsm(AsmSrc):
 
 if __name__ == '__main__':
     logger.setLevel(logging.DEBUG)
-    name = '456.hmmer'
-    filePath = '/home/readm/fast-cfi/workload/%s/work/fastcfi_final.s' % name
-    src_path = '/home/readm/fast-cfi/workload/%s/work/' % name
-    cfg_path = '/home/readm/fast-cfi/workload/%s/work/fastcfi.info' % name
-    asm = SCFIAsm.read_file(filePath, src_path=src_path)
-    asm.tmp_asm_path = src_path+'scfi_tmp.s'
-    asm.tmp_obj_path = src_path+'scfi_tmp.o'
-    asm.tmp_dmp_path = src_path+'scfi_tmp.dump'
+    #spec_lst=['400.perlbench', '401.bzip2', '403.gcc', '429.mcf', '445.gobmk', '456.hmmer', '458.sjeng', '462.libquantum', '464.h264ref', '471.omnetpp', '473.astar', '483.xalancbmk']
+    spec_lst=['445.gobmk']
+    for name in spec_lst:
+        filePath='/home/readm/fast-cfi/workload/%s/work/fastcfi_final.s' % name
+        src_path='/home/readm/fast-cfi/workload/%s/work/' % name
+        cfg_path='/home/readm/fast-cfi/workload/%s/work/fastcfi.info' % name
+        asm=SCFIAsm.read_file(filePath, src_path=src_path)
+        asm.tmp_asm_path=src_path+'scfi_tmp.s'
+        asm.tmp_obj_path=src_path+'scfi_tmp.o'
+        asm.tmp_dmp_path=src_path+'scfi_tmp.dump'
 
-    asm.prepare_and_count()
-    asm.mark_all_instructions(cfg=CFG.read_from_llvm(cfg_path))
-    asm.move_file_directives_forward()
-    asm.only_move_targets(move_method='insert')
-    os.chdir(src_path)
-    asm.compile_tmp()
-    link(asm.tmp_obj_path, src_path+'scfi_tmp')
+        asm.prepare_and_count()
+        asm.mark_all_instructions(cfg=CFG.read_from_llvm(cfg_path))
+        asm.move_file_directives_forward()
+        asm.only_move_targets(move_method='insert')
+        os.chdir(src_path)
+        asm.compile_tmp()
+        link(asm.tmp_obj_path, src_path+'scfi_tmp')
 
-    run_cycle(size='test', filelst=['./scfi_tmp'], lst=[name])
+        run_cycle(size='test', filelst=['./scfi_tmp'], lst=[name])

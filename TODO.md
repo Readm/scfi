@@ -11,7 +11,7 @@
     + [ ]  重排优化
       + [x]  padding
         + [ ]  optimizing
-      + [ ]  inserting
+      + [x]  inserting
         + [ ]  optimizing
   + [ ] 动态库支持
     + [ ] 添加object的slot使用信息
