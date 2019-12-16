@@ -42,6 +42,9 @@ class Line(str):
         self.section_declaration = None
         self.new_str = None
 
+    def __hash__(self):
+        return hash(self._key_id)
+
     def __eq__(self, other):
         if isinstance(other, Line):
             return other and self._key_id == other._key_id
@@ -51,6 +54,7 @@ class Line(str):
     def set_str(self, s):
         self.new_str = s
 
+    # TODO: fix it
     def __str__(self):
         if self.new_str!= None:
             return str(self.new_str)
@@ -167,6 +171,20 @@ class AsmSrc(str):
             yield p
             p = p.next
         yield p
+    
+    def traverse_from(self, line):
+        p = line
+        while p.next != None:
+            yield p
+            p = p.next
+        yield p
+
+    def traverse_back_from(self, line):
+        p = line
+        while p.prev != None:
+            yield p
+            p = p.prev
+        yield p
 
     def update_debug_file_number(self, path):
         # we add more keys to the debug_file_number to facilitate the mapping
@@ -187,7 +205,8 @@ class AsmSrc(str):
         try:
             return self.labels[label]
         except KeyError:
-            logger.debug()('label %s not found' % label)
+            raise
+            logger.debug('label %s not found' % label)
             return None
 
     def insert_before(self, insert_line, before_line):
@@ -255,7 +274,7 @@ class AsmSrc(str):
                 begin_line = begin_line.prev
             # if before this line, it's a section declaration, include it
             if begin_line.prev.is_section_directive:
-                begin_index = begin_index.prev
+                begin_line= begin_line.prev
 
             # find comment 'End function'
             while '# -- End function' not in end_line:
