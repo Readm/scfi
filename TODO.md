@@ -13,6 +13,7 @@
         + [ ]  optimizing
       + [x]  inserting
         + [ ]  optimizing
+  + [ ]  C++ support (section union)
   + [ ] 动态库支持
     + [ ] 添加object的slot使用信息
     + [ ] 处理不同section的对齐
