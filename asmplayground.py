@@ -22,7 +22,6 @@ class Line(str):
         self.prev = None
         self.next = None
         # self.type: 'empty' 'instruction' 'comment' 'directive' 'label'
-
         # TODO: we assume no /*...*/ comments, or we should remove them in AsmSrc.__init__
         if "/*" in self:
             logger.warn('Not supported comment: /*...*/')
@@ -41,7 +40,7 @@ class Line(str):
             self.type = 'instruction'
 
         self.section_declaration = None
-        self.new_str = ''
+        self.new_str = None
 
     def __eq__(self, other):
         if isinstance(other, Line):
@@ -51,9 +50,10 @@ class Line(str):
 
     def set_str(self, s):
         self.new_str = s
-    
+
     def __str__(self):
-        if self.new_str: return str(self.new_str)
+        if self.new_str!= None:
+            return str(self.new_str)
         return super().__str__()
 
     def strip_comment(self):
@@ -62,7 +62,6 @@ class Line(str):
     def get_opcode(self):
         if self.is_instruction:
             return self.split()[0]
-
 
     @property
     def is_empty(self): return self.type == 'empty'
@@ -203,6 +202,14 @@ class AsmSrc(str):
         insert_line.next.prev = insert_line
         after_line.next = insert_line
 
+    def insert_lines_before(self, lines, before_line):
+        for line in lines:
+            self.insert_before(line, before_line)
+
+    def insert_lines_after(self, lines, after_line):
+        for line in lines[::-1]:
+            self.insert_after(line, after_line)
+
     def unlink_line(self, line):
         line.prev.next = line.next
         line.next.prev = line.prev
@@ -219,15 +226,13 @@ class AsmSrc(str):
 
     def move_lines_before(self, line_lst, before_line):
         for line in line_lst:
-            self.unlink(line)
-        for line in line_lst:
-            self.insert_before(line, before_line)
+            self.unlink_line(line)
+        self.insert_lines_before(line_lst, before_line)
 
     def move_lines_after(self, line_lst, after_line):
         for line in line_lst:
-            self.unlink(line)
-        for line in line_lst:
-            self.insert_after(line, after_line)
+            self.unlink_line(line)
+        self.insert_lines_after(line_lst, after_line)
 
     def move_file_directives_forward(self):
         # move so that all .loc will not meet undeclared file
@@ -290,11 +295,13 @@ class AsmSrc(str):
             asm.update_debug_file_number(src_path)
             return asm
 
+
 if __name__ == '__main__':
-    asm=AsmSrc.read_file('./testcase/401.bzip.s')
-    s=set()
+    asm = AsmSrc.read_file('./testcase/401.bzip.s')
+    s = set()
     for line in asm.traverse_lines():
-        if line.get_opcode()==None: continue
+        if line.get_opcode() == None:
+            continue
         s.add(line.get_opcode())
     from pprint import pprint
     pprint(s)
