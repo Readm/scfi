@@ -146,9 +146,9 @@ class ToolKit():
 # add new read function for new formats
 
 class PaddingLine(Line):
-    def __init__(self, s, bit_width):
+    def __init__(self, s):
         super().__init__(s)
-        self.bit_width = bit_width
+        self.bit_width = 8
 
     def set_width(self, n):
         self.bit_width = n
@@ -592,7 +592,7 @@ class SCFIAsm(AsmSrc):
 if __name__ == '__main__':
     logger.setLevel(logging.DEBUG)
     #spec_lst=['400.perlbench', '401.bzip2', '403.gcc', '429.mcf', '445.gobmk', '456.hmmer', '458.sjeng', '462.libquantum', '464.h264ref', '471.omnetpp', '473.astar', '483.xalancbmk']
-    spec_lst = ['401.bzip2']
+    spec_lst = ['400.perlbench']
     for name in spec_lst:
         filePath = '/home/readm/fast-cfi/workload/%s/work/fastcfi_final.s' % name
         src_path = '/home/readm/fast-cfi/workload/%s/work/' % name
