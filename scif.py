@@ -193,12 +193,18 @@ class SCFIAsm(AsmSrc):
         super().__init__(s)
         self.cfg = cfg
         self.slot_bit_width = 8
+        self.max_variable_slot_bit_width = 10
         self.branch_lst = []  # in order
         self.marked_branch_lst = []  # in order
         self.marked_target_lst = []
-        self.valid_branch_tags = set()       # cfg contains more tags than our object
+        self.valid_branch_tags = set()    # cfg contains more tags than our object
         self.valid_target_tags = set()
-        self.tag_slot = dict()
+        self.tag_slot = dict()     # tag->(slot, bit width)
+
+        self.tag_target_count =  dict() # for huffman tree
+        self.tag_branch_count = dict()
+        self.tag_count = dict()
+
         self.label_address = dict()
         self.label_size = dict()
 
@@ -212,12 +218,10 @@ class SCFIAsm(AsmSrc):
 
         self.max_slot_address = 0
 
-    def prepare_and_count(self):
+    def mark_all_instructions(self, cfg=None):
         for line in self.traverse_lines():
             if self.toolkit.is_indirect_branch(line):
                 self.branch_lst.append(line)
-
-    def mark_all_instructions(self, cfg=None):
         if cfg:
             self.cfg = cfg
         self.cfg.convert_filename_to_number(self.debug_file_number)
@@ -240,6 +244,15 @@ class SCFIAsm(AsmSrc):
                 self.marked_branch_lst.append(branch)
                 for tag in self.cfg.branch[branch.debug_loc]:
                     self.valid_branch_tags.add(tag)
+                    try:
+                        self.tag_branch_count[tag]+=1
+                    except KeyError:
+                        self.tag_branch_count[tag]=1
+                    try:
+                        self.tag_count[tag]+=1
+                    except KeyError:
+                        self.tag_count[tag]=1
+
 
     def mark_all_targets(self):
         for line in self.label_list:
@@ -249,6 +262,14 @@ class SCFIAsm(AsmSrc):
                 self.marked_target_lst.append(line)
                 for tag in self.cfg.target[label]:
                     self.valid_target_tags.add(tag)
+                    try:
+                        self.tag_target_count[tag]+=1
+                    except KeyError:
+                        self.tag_target_count[tag]=1
+                    try:
+                        self.tag_count[tag]+=1
+                    except KeyError:
+                        self.tag_count[tag]=1
 
     @property
     def inside_valid_tags(self):
@@ -274,25 +295,42 @@ class SCFIAsm(AsmSrc):
         new = len(self.marked_branch_lst)
         logger.debug('Marked branch: %d -> %d' % (old, new))
 
+    # fixed slot bit width
     def random_slot_allocation(self):
         # use hash, this allocation requires no compile
         for target in self.marked_target_lst:
             slots = []
             for tag in target.tags:
                 slot = hash(tag) & ((1 << self.slot_bit_width)-1)
-                self.tag_slot[tag] = slot
+                self.tag_slot[tag] = (slot, self.slot_bit_width)
                 slots.append(slot)
             setattr(target, 'slots', slots)
         for branch in self.marked_branch_lst:
             slots = []
             for tag in branch.tags:
                 slot = hash(tag) & ((1 << self.slot_bit_width)-1)
-                self.tag_slot[tag] = slot
+                self.tag_slot[tag] = (slot, self.slot_bit_width)
                 slots.append(slot)
             setattr(target, 'slots', slots)
         for tag in self.tag_slot.keys():
             logger.debug('random_allocation:\t'+str(tag) +
-                         ' -> \t'+hex(self.tag_slot[tag]))
+                         ' -> \t'+hex(self.tag_slot[tag][0]))
+    
+    def huffman_slot_allocation(self,source='target'):
+        from huffman import codebook
+        if source=='target':
+            code = codebook([(tag,self.tag_target_count[tag]) for tag in self.valid_target_tags])
+        elif source=='branch':
+            code = codebook([(tag,self.tag_branch_count[tag]) for tag in self.valid_target_tags])
+        elif source=='both':
+            code = codebook([(tag,self.tag_count[tag]) for tag in self.valid_target_tags])
+        else:
+            raise Exception('Wrong source for huffman slot allocation.')
+        for key in code.keys():
+            if len(code[key])>self.max_variable_slot_bit_width:
+                code[key]=code[key][:self.max_variable_slot_bit_width]
+            self.tag_slot[key]=(int(code[key],2),len(code[key]))
+
 
     def compile_tmp(self, cmd='', update_label=True):
         logger.info('compiling...')
@@ -602,9 +640,10 @@ if __name__ == '__main__':
         asm.tmp_obj_path = src_path+'scfi_tmp.o'
         asm.tmp_dmp_path = src_path+'scfi_tmp.dump'
 
-        asm.prepare_and_count()
         asm.mark_all_instructions(cfg=CFG.read_from_llvm(cfg_path))
         asm.move_file_directives_forward()
+        asm.huffman_slot_allocation()
+        exit()
         asm.only_move_targets(move_method='insert')
         os.chdir(src_path)
         asm.compile_tmp()
