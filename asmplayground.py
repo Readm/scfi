@@ -10,12 +10,22 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('SCFI')
 
+class Environment():
+    def __init__(self,isa='x86', syntax='att'):
+        self.isa='x86'
+        self.syntax='att'
+    
+    @property
+    def comment_character(self):
+        if self.isa=='x86': return '#'
+        if self.isa=='arm': return '@'
+
+global_env=Environment('x86','att')
 
 class Line(str):
     key_id = 0  # we need a unique id for each Line, otherwise we cannot distinguish different line with the same content
 
     def __init__(self, s):
-        super(Line, self).__init__()
         self._key_id = Line.key_id
         Line.key_id += 1
         # index_of_line is too slow, we add a two-way link list
@@ -30,7 +40,7 @@ class Line(str):
         last_char = self.strip_comment().rstrip()[-1:]
         if not first_char:
             self.type = 'empty'
-        elif first_char == '#':
+        elif first_char == global_env.comment_character:
             self.type = 'comment'
         elif last_char == ':':
             self.type = 'label'
@@ -61,7 +71,7 @@ class Line(str):
         return super().__str__()
 
     def strip_comment(self):
-        return self.split('#')[0]
+        return self.split(global_env.comment_character)[0]
 
     def get_opcode(self):
         if self.is_instruction:

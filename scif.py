@@ -21,24 +21,21 @@ logger = logging.getLogger('SCFI')
 
 class ToolKit():
 
-    def __init__(self, isa='x86', syntex='AT&T', landing_pad='.byte 0xF3, 0x0F, 0x1E, 0xFA', landing_pad_len=4):
-        self.isa = isa
-        self.syntex = syntex
+    def __init__(self, landing_pad='.byte 0xF3, 0x0F, 0x1E, 0xFA', landing_pad_len=4):
         self.landing_pad = landing_pad
         self.landing_pad_len = landing_pad_len
         self.tmp_label_count = 0
 
-        if self.isa == 'x86':
+        if global_env.isa == 'x86':
             self.island_length = 11  # insert island length, the worst case
             self.island_head = 5  # length from island begin to landing pad, the worst case
 
     def get_tmp_label(self, info=''):
-
         self.tmp_label_count += 1
         return '.scfi_tmp%d%s' % (self.tmp_label_count, info)
 
     def is_control_transfer(self, line):
-        if self.isa == 'x86':
+        if global_env.isa == 'x86':
             op = line.get_opcode()
             if not op:
                 return False
@@ -49,13 +46,15 @@ class ToolKit():
             if 'call' in op:
                 return True
             return False
+        else:
+            raise Exception('Not implemented.')
 
     def is_indirect_call(self, line):
         # remember to add rules for more languages
-        if self.isa == 'x86':
-            if self.syntex == 'AT&T':
+        if global_env.isa == 'x86':
+            if global_env.syntax == 'att':
                 return True if line.is_instruction and 'call' in line and '*' in line else False
-        raise Exception('Unsupported syntex or ISA')
+        raise Exception('Unsupported syntax or ISA')
 
     # TODO: support indirect jump
     def is_indirect_jump(self, line):
@@ -69,21 +68,19 @@ class ToolKit():
 
     # retrun a Line of .org
     def padding_to_slot(self, bit_width, slot):
-        return PaddingLine('\t.org ((.-0x%x-1)/(1<<%d)+1)*(1<<%d)+0x%x, 0x90 \t# pad to 0x%x, in width %d' %
-                           (slot, bit_width, bit_width, slot, slot, bit_width))
+        return PaddingLine.pad_to_slot(slot, bit_width)
 
     def padding_to_label(self, bit_width, label):
-        return PaddingLine('\t.org ((.-(%s%%(1<<%d))-1)/(1<<%d)+1)*(1<<%d)+(%s%%(1<<%d)), 0x90 \t# pad to %s, in width %d' %
-                           (label, bit_width, bit_width, bit_width, label, bit_width, label, bit_width))
+        return PaddingLine.pad_to_label(label, bit_width)
 
     def get_landing_pad_line(self):
         return Line('\t'+self.landing_pad)
 
     def jump_label(self, label):
-        if self.isa == 'x86':
-            if self.syntex == 'AT&T':
+        if global_env.isa == 'x86':
+            if global_env.syntax == 'att':
                 return Line('\tjmp %s' % label)
-        raise Exception('Unsupported syntex or ISA')
+        raise Exception('Unsupported syntax or ISA')
 
     def landing_and_jump(self, label):
         lines = []
@@ -103,8 +100,8 @@ class ToolKit():
     # branch -> branch in CFI
     def modified_branch(self, line, type='', slot=[], reserved=True):
         lines = []
-        if self.isa == 'x86':
-            if self.syntex == 'AT&T':
+        if global_env.isa == 'x86':
+            if global_env.syntax == 'att':
                 if type == 'replace_8_bits':
                     call_expr = self.get_call_expr(line)
                     if reserved:
@@ -118,11 +115,11 @@ class ToolKit():
                     lines.append(Line('\tcallq \t*%r11'))
                     return lines
 
-        raise Exception('Unsupported syntex or ISA')
+        raise Exception('Unsupported syntax or ISA')
 
     def set_branch_slot(self, line, slot):
-        if self.isa == 'x86':
-            if self.syntex == 'AT&T':
+        if global_env.isa == 'x86':
+            if global_env.syntax == 'att':
                 if type == 'replace_8_bits':
                     line.replace('0x0', hex(slot))
 
@@ -146,12 +143,17 @@ class ToolKit():
 # add new read function for new formats
 
 class PaddingLine(Line):
-    def __init__(self, s):
+    def __init__(self, s, bit_width=8):
         super().__init__(s)
-        self.bit_width = 8
+        self.bit_width = bit_width
 
-    def set_width(self, n):
-        self.bit_width = n
+    @classmethod
+    def pad_to_label(cls, label, bit_width=8):
+        return cls('\t.org ((.-(%s%%(1<<%d))-1)/(1<<%d)+1)*(1<<%d)+(%s%%(1<<%d)), 0x90 \t# pad to %s, in width %d' % (label, bit_width, bit_width, bit_width, label, bit_width, label, bit_width))
+
+    def pat_to_slot(cls, slot, bit_width=8):
+        return cls('\t.org ((.-0x%x-1)/(1<<%d)+1)*(1<<%d)+0x%x, 0x90 \t# pad to 0x%x, in width %d' %
+                   (slot, bit_width, bit_width, slot, slot, bit_width))
 
 
 class CFG():
@@ -201,7 +203,7 @@ class SCFIAsm(AsmSrc):
         self.valid_target_tags = set()
         self.tag_slot = dict()     # tag->(slot, bit width)
 
-        self.tag_target_count =  dict() # for huffman tree
+        self.tag_target_count = dict()  # for huffman tree
         self.tag_branch_count = dict()
         self.tag_count = dict()
 
@@ -245,14 +247,13 @@ class SCFIAsm(AsmSrc):
                 for tag in self.cfg.branch[branch.debug_loc]:
                     self.valid_branch_tags.add(tag)
                     try:
-                        self.tag_branch_count[tag]+=1
+                        self.tag_branch_count[tag] += 1
                     except KeyError:
-                        self.tag_branch_count[tag]=1
+                        self.tag_branch_count[tag] = 1
                     try:
-                        self.tag_count[tag]+=1
+                        self.tag_count[tag] += 1
                     except KeyError:
-                        self.tag_count[tag]=1
-
+                        self.tag_count[tag] = 1
 
     def mark_all_targets(self):
         for line in self.label_list:
@@ -263,13 +264,13 @@ class SCFIAsm(AsmSrc):
                 for tag in self.cfg.target[label]:
                     self.valid_target_tags.add(tag)
                     try:
-                        self.tag_target_count[tag]+=1
+                        self.tag_target_count[tag] += 1
                     except KeyError:
-                        self.tag_target_count[tag]=1
+                        self.tag_target_count[tag] = 1
                     try:
-                        self.tag_count[tag]+=1
+                        self.tag_count[tag] += 1
                     except KeyError:
-                        self.tag_count[tag]=1
+                        self.tag_count[tag] = 1
 
     @property
     def inside_valid_tags(self):
@@ -315,22 +316,24 @@ class SCFIAsm(AsmSrc):
         for tag in self.tag_slot.keys():
             logger.debug('random_allocation:\t'+str(tag) +
                          ' -> \t'+hex(self.tag_slot[tag][0]))
-    
-    def huffman_slot_allocation(self,source='target'):
+
+    def huffman_slot_allocation(self, source='target'):
         from huffman import codebook
-        if source=='target':
-            code = codebook([(tag,self.tag_target_count[tag]) for tag in self.valid_target_tags])
-        elif source=='branch':
-            code = codebook([(tag,self.tag_branch_count[tag]) for tag in self.valid_target_tags])
-        elif source=='both':
-            code = codebook([(tag,self.tag_count[tag]) for tag in self.valid_target_tags])
+        if source == 'target':
+            code = codebook([(tag, self.tag_target_count[tag])
+                             for tag in self.valid_target_tags])
+        elif source == 'branch':
+            code = codebook([(tag, self.tag_branch_count[tag])
+                             for tag in self.valid_target_tags])
+        elif source == 'both':
+            code = codebook([(tag, self.tag_count[tag])
+                             for tag in self.valid_target_tags])
         else:
             raise Exception('Wrong source for huffman slot allocation.')
         for key in code.keys():
-            if len(code[key])>self.max_variable_slot_bit_width:
-                code[key]=code[key][:self.max_variable_slot_bit_width]
-            self.tag_slot[key]=(int(code[key],2),len(code[key]))
-
+            if len(code[key]) > self.max_variable_slot_bit_width:
+                code[key] = code[key][:self.max_variable_slot_bit_width]
+            self.tag_slot[key] = (int(code[key], 2), len(code[key]))
 
     def compile_tmp(self, cmd='', update_label=True):
         logger.info('compiling...')
@@ -380,11 +383,11 @@ class SCFIAsm(AsmSrc):
 
     def build_target_island(self, ori_line, padding_line):
         label = ori_line.get_label()
-        modified_label = 'SCFIR'+label
+        modified_label = '.scfi_real_'+label
         ori_line.set_str(ori_line.replace(label, modified_label))
 
         lines = []
-        lines.append(Line('SCFIIB%s:' % label))
+        lines.append(Line('.scfi_ib_%s:' % label))
         lines.append(Line('\tjmp\tSCFIIE%s' % label))
         lines.append(padding_line)
         l = Line('%s:' % label)
@@ -392,7 +395,7 @@ class SCFIAsm(AsmSrc):
         lines.append(l)
         lines.append(self.toolkit.get_landing_pad_line())
         lines.append(Line('\tjmp\t%s' % modified_label))
-        lines.append(Line('SCFIIE%s:' % label))
+        lines.append(Line('.scfi_ie_%s:' % label))
 
         setattr(lines[0], 'island_label', label)
         setattr(lines[0], 'island_end', lines[-1])
@@ -416,7 +419,7 @@ class SCFIAsm(AsmSrc):
         return lines
 
     def insert_ideal_place(self, target_label, slot=None, align_label=''):
-        target_label = 'SCFIR'+target_label
+        target_label = '.scfi_real_'+target_label
         if not (bool(slot) ^ bool(align_label)):
             raise Exception(
                 "Need ONE island align target")
@@ -432,10 +435,6 @@ class SCFIAsm(AsmSrc):
         return ideal_place
 
     def insert_island(self, island, search_begin, ideal_place):
-
-        # TODO: do not affect former islands
-        # if ideal_place > self.max_island_end: pass
-
         last_label = None
         for tmp_label in self.basic_block_labels:
             address = self.label_address[tmp_label.get_label()]
@@ -462,6 +461,7 @@ class SCFIAsm(AsmSrc):
             setattr(island[0], 'placed_address', address)
             self.insert_lines_after(island, last_label)
 
+    # not tested yet
     def fix_island_address(self, island):
         begin_label = island[0].get_label()
         address = self.label_address[begin_label]
@@ -504,16 +504,17 @@ class SCFIAsm(AsmSrc):
     def read_label_address(self, label):
         return self.label_address[label]
 
+    # without pre-determined slots, use first label instead
     # only reorder target, not branches
     # use insert or padding
     # assumptions: targets are all (function) labels
     #              each branch has only one tag
     #              each target has only one tag
-    def only_move_targets(self, move_method='padding', optimize_round=0):
+    def only_move_targets_nature(self, move_method='padding', optimize_round=0):
         # attributes set:
         # first_met_tags = first time met a tag, which means use it nature slot
         # met_tags = tags met already, which means use the slot equals to the first one
-        logger.info('Only_move_targets, move method: %s' % move_method)
+        logger.info('Only_move_targets_nature, move method: %s' % move_method)
         self.cut_one_side_tags()
 
         need_move = []
@@ -594,7 +595,7 @@ class SCFIAsm(AsmSrc):
                     line_ideal_place[x] = self.insert_ideal_place(
                         x.get_label(), align_label='fsttag%s' % x.align_to_tags[0])
                 move_lst.sort(key=lambda x: line_ideal_place[x])
-                search_begin = self.label_address['SCFIR' +
+                search_begin = self.label_address['.scfi_real_' +
                                                   move_lst[0].get_label()]
                 self.insert_island(
                     line_to_island[move_lst[0]], search_begin, line_ideal_place[move_lst[0]])
@@ -627,6 +628,7 @@ class SCFIAsm(AsmSrc):
             pass
 
 
+
 if __name__ == '__main__':
     logger.setLevel(logging.DEBUG)
     #spec_lst=['400.perlbench', '401.bzip2', '403.gcc', '429.mcf', '445.gobmk', '456.hmmer', '458.sjeng', '462.libquantum', '464.h264ref', '471.omnetpp', '473.astar', '483.xalancbmk']
@@ -643,8 +645,8 @@ if __name__ == '__main__':
         asm.mark_all_instructions(cfg=CFG.read_from_llvm(cfg_path))
         asm.move_file_directives_forward()
         asm.huffman_slot_allocation()
-        exit()
         asm.only_move_targets(move_method='insert')
+        exit()
         os.chdir(src_path)
         asm.compile_tmp()
         link(asm.tmp_obj_path, src_path+'scfi_tmp')
