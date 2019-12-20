@@ -342,6 +342,7 @@ class SCFIAsm(AsmSrc):
             if len(code[key]) > self.max_variable_slot_bit_width:
                 code[key] = code[key][:self.max_variable_slot_bit_width]
             self.tag_slot[key] = (int(code[key], 2), len(code[key]))
+            logger.debug("tag %s \t-> %s \t%x(%dbits)"%(key,code[key],int(code[key], 2),len(code[key])))
 
     def compile_tmp(self, cmd='', update_label=True):
         logger.info('compiling...')
@@ -600,8 +601,6 @@ class SCFIAsm(AsmSrc):
                         slot_width=max([self.tag_slot[tag][1] for tag in line.tags])
                         setattr(line, 'slots',slots)
                         setattr(line, 'slot_width',slot_width)
-                        print(line+'mark')
-
                     
 
         logger.debug('All instructions marked.')
@@ -684,7 +683,7 @@ class SCFIAsm(AsmSrc):
 if __name__ == '__main__':
     logger.setLevel(logging.DEBUG)
     #spec_lst=['400.perlbench', '401.bzip2', '403.gcc', '429.mcf', '445.gobmk', '456.hmmer', '458.sjeng', '462.libquantum', '464.h264ref', '471.omnetpp', '473.astar', '483.xalancbmk']
-    spec_lst = ['456.hmmer']
+    spec_lst = ['400.perlbench']
     for name in spec_lst:
         filePath = '/home/readm/fast-cfi/workload/%s/work/fastcfi_final.s' % name
         src_path = '/home/readm/fast-cfi/workload/%s/work/' % name
@@ -697,7 +696,7 @@ if __name__ == '__main__':
         asm.mark_all_instructions(cfg=CFG.read_from_llvm(cfg_path))
         asm.move_file_directives_forward()
         asm.huffman_slot_allocation()
-        asm.only_move_targets(move_method='insert',slot_alloc='predetermined')
+        asm.only_move_targets(move_method='padding',slot_alloc='predetermined')
         os.chdir(src_path)
         asm.compile_tmp()
         link(asm.tmp_obj_path, src_path+'scfi_tmp')
