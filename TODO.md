@@ -15,15 +15,14 @@
       + [x]  inserting
         + [ ]  optimize
       + [ ] fix same slot  
-  + [ ]  C++ support (section union)
-    + [ ]  tried, but didn't work
   + [ ]  language support
     + [x]  X86
     + [ ]  ARM
     + [ ]  RISC-V
   + [ ] 动态库支持
     + [ ] 添加object的slot使用信息
-    + [x] 处理不同section的对齐
+    + [x] 处理不同section的对齐(not automatic yet)
+    + [ ] C++ sections
 + [ ] CFG
   + [x] LLVM icall
   + [ ] C++ 虚函数
@@ -32,5 +31,5 @@
 ## leaving problems
 
 + [x] how to modify arbitrary bits
-+ [ ] variable slot width/ allocation for it
++ [x] variable slot width/ allocation for it
 + [ ] optimizing compile speed
