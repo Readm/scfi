@@ -1,10 +1,14 @@
-from tqdm import tqdm
+#from tqdm import tqdm
 from time import time
-import pickle
-import subprocess
-import os
-import hashlib
 import logging
+import hashlib
+import os
+import subprocess
+import pickle
+
+
+def tqdm(s): return s  # disable tqdm in pypy
+
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -12,34 +16,36 @@ logger = logging.getLogger('SCFI')
 
 spec_path = '/home/readm/SPEC2006'
 
-def compiles(path,cmd):
+
+def compiles(path, cmd):
     os.chdir(path)
     with open("fastcfi.info", "w") as f:
         for c in tqdm(cmd[:-1]):
-            print(c,file=sys.stderr)
+            print(c, file=sys.stderr)
             if c.strip():
-                p=os.popen(c+' -w')
-                output=p.readlines()
+                p = os.popen(c+' -w')
+                output = p.readlines()
                 for line in output:
                     if "FastCFI" in line:
                         f.writelines([line])
 
     c = cmd[-1] + ' -save-temps -Wl,-plugin-opt=save-temps'
-    print(c,file=sys.stderr)
-    p=subprocess.Popen(c,stdout=subprocess.PIPE,shell=True)
+    print(c, file=sys.stderr)
+    p = subprocess.Popen(c, stdout=subprocess.PIPE, shell=True)
     p.wait()
 
     compiler = 'clang++' if 'clang++' in cmd[-1].split()[0] else 'clang'
     c = "/usr/local/bin/llc *.precodegen.bc -o fastcfi_final.s"
-    p=subprocess.Popen(c,stdout=subprocess.PIPE,shell=True)
+    p = subprocess.Popen(c, stdout=subprocess.PIPE, shell=True)
     p.wait()
     return
 
 
 def compile_all():
     lst = \
-    ['400.perlbench','401.bzip2','403.gcc','429.mcf','445.gobmk','456.hmmer','458.sjeng','462.libquantum','464.h264ref','471.omnetpp','473.astar','483.xalancbmk'] # CINT2006
-    for cmds in tqdm(get_cmds(config='lto.cfg',target='int')):
+        ['400.perlbench', '401.bzip2', '403.gcc', '429.mcf', '445.gobmk', '456.hmmer', '458.sjeng',
+            '462.libquantum', '464.h264ref', '471.omnetpp', '473.astar', '483.xalancbmk']  # CINT2006
+    for cmds in tqdm(get_cmds(config='lto.cfg', target='int')):
         if cmds.name in lst:
             try:
                 build_cmd = cmds.make_cmd
@@ -49,11 +55,13 @@ def compile_all():
                 shutil.copytree(work_path+cmds.name+'/src', dirpath)
                 compiles(dirpath, build_cmd)
             except Exception as e:
-                with open('/home/readm/fast-cfi/log/error.log','a') as f:
+                with open('/home/readm/fast-cfi/log/error.log', 'a') as f:
                     f.write(cmds.name+traceback.format_exc())
 
+
 def prepare_all(size='ref'):
-    lst = ['400.perlbench','401.bzip2','403.gcc','429.mcf','445.gobmk','456.hmmer','458.sjeng','462.libquantum','464.h264ref','471.omnetpp','473.astar','483.xalancbmk'] # CINT2006
+    lst = ['400.perlbench', '401.bzip2', '403.gcc', '429.mcf', '445.gobmk', '456.hmmer', '458.sjeng',
+           '462.libquantum', '464.h264ref', '471.omnetpp', '473.astar', '483.xalancbmk']  # CINT2006
     for i in lst:
         path = '/home/readm/fast-cfi/workload/'+i
         copy_data(path, size=size)
@@ -169,7 +177,8 @@ def run_cycle(size='ref', filelst=['/tmp/scfi_tmp'], lst=['400.perlbench', '401.
     for cmds in tqdm(get_cmds(config='lto.cfg', target=target)):
         if cmds.name in lst:
             for filename in filelst:
-                logger.info('Running %s with file %s...' % (cmds.name, filename))
+                logger.info('Running %s with file %s...' %
+                            (cmds.name, filename))
                 os.chdir('/home/readm/scfi/workload/'+cmds.name+'/work')
                 total_takes = 0
                 try:
@@ -180,7 +189,7 @@ def run_cycle(size='ref', filelst=['/tmp/scfi_tmp'], lst=['400.perlbench', '401.
                         if c.startswith('cd'):
                             continue
                         c = filename+' '+c.split(' ', 1)[-1]
-                        c = c.replace('>>','>')
+                        c = c.replace('>>', '>')
                         logger.debug(c)
                         start = time()
                         p = subprocess.Popen(
@@ -195,7 +204,8 @@ def run_cycle(size='ref', filelst=['/tmp/scfi_tmp'], lst=['400.perlbench', '401.
                     with open('/home/readm/scfi/log/run.log', 'a') as f:
                         f.write('Run %s: faild @ size=%s, file=%s.\n' %
                                 (cmds.name, size, filename))
-                logger.info('Finished %s: %d seconds.' % (cmds.name, total_takes))
+                logger.info('Finished %s: %d seconds.' %
+                            (cmds.name, total_takes))
                 with open('/home/readm/scfi/log/run.log', 'a') as f:
                     f.write('Run %s: %f seconds @ size=%s, file=%s.\n' %
                             (cmds.name, total_takes, size, filename))
@@ -211,7 +221,7 @@ def link(object_path, output_path, is_cpp=False):
             output_path, object_path)
         os.popen(c)
 
+
 def reset_env():
     compile_all()
     prepare_all()
-

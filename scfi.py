@@ -21,10 +21,9 @@ DETERMIN = 3
 # 'reserved_tags': we add the instruction with tags, but did not decide its slot
 # 'tags', 'slots'
 
-# language specified toolkits
-
 
 class ToolKit():
+    '''Language specified toolkits'''
 
     def __init__(self, landing_pad='.byte 0xF3, 0x0F, 0x1E, 0xFA', landing_pad_len=4):
         self.landing_pad = landing_pad
@@ -163,12 +162,13 @@ class PaddingLine(Line):
                    (slot, bit_width, bit_width, slot, slot, bit_width))
 
 
-# Label based CFG, each target/branch has tags(labels)
-# Tags can be strings, int ...
-# For each target: keyed by label
-# For each branch: keyed by debug_loc
-# add new read function for new formats
 class CFG():
+    '''Label based CFG, each target/branch has tags(labels)
+    Tags can be strings, int ...
+    For each target: keyed by label
+    For each branch: keyed by debug_loc
+    Remember to add new read function for new formats'''
+
     def __init__(self, target=dict(), branch=dict()):
         self.target = target  # label-> [tags]
         self.branch = branch  # debug loc -> [tags]
@@ -192,9 +192,8 @@ class CFG():
                     target.pop(key)
             return cls(target=target, branch=branch)
 
-    # convert the string:y:z to x y z form
-
     def convert_filename_to_number(self, file_numbers):
+        '''convert the string:y:z to x y z form'''
         for branch_loc in [k for k in self.branch.keys()]:
             new_key = str(file_numbers[branch_loc.split(':')[0]])
             new_key += ' '+' '.join(branch_loc.split(':')[1:3])
@@ -309,9 +308,8 @@ class SCFIAsm(AsmSrc):
         new = len(self.marked_branch_lst)
         logger.debug('Marked branch: %d -> %d' % (old, new))
 
-    # fixed slot bit width
     def random_slot_allocation(self):
-        # use hash, this allocation requires no compile
+        '''Fixed slot bit width. Use hash, this allocation requires no compile'''
         for target in self.marked_target_lst:
             slots = []
             for tag in target.tags:
@@ -350,10 +348,15 @@ class SCFIAsm(AsmSrc):
             logger.debug("tag %s \t-> %s \t%x(%dbits)" %
                          (key, code[key], int(code[key], 2), len(code[key])))
 
+    def union_text(self):
+        '''Force all executable section to be .text, used in C++'''
+        for line in self.section_lines:
+            line.set_str('\t.text')
+
     def compile_tmp(self, cmd='', update_label=True):
         logger.info('compiling...')
         with open(self.tmp_asm_path, 'w') as f:
-            f.write(str(self))
+            f.writelines((i+'\n' for i in self.traverse_lines()))
         if not cmd:
             cmd = 'as %s -o %s' % (self.tmp_asm_path, self.tmp_obj_path)
         logger.debug(cmd)
@@ -369,15 +372,15 @@ class SCFIAsm(AsmSrc):
             self.update_tmp_label_addresses()
         logger.info('Finish compile.')
 
-    # return the function name the address in
     def function_hold_address(self, address):
+        '''return the function name the address in'''
         for function in self.label_size.keys():  # only functions have size
             if self.label_address[function] <= address and self.label_address[function]+self.label_size[function] >= address:
                 return function
         return None
 
-    # mark all basic blocks in a function, return all tmp labels
     def mark_function_basic_blocks(self, function_name):
+        '''mark all basic blocks in a function, return all tmp labels'''
         lines = self.get_function_lines(function_name)
         tmp_labels = []
         for line in lines:
@@ -396,18 +399,18 @@ class SCFIAsm(AsmSrc):
                 tmp_labels.append(tmp_label)
         self.basic_block_labels = tmp_labels
 
-    # used in "insert" moving
-    # mark several lines as "pinned_island", insert them into codes, and modify the original label
-    # they will "float" in the code, but always "pin" in the address
-    # a normal form:
-    # SCFIIBtarget:
-    #     jump island_end
-    #     .org (padding to ...)
-    # target:
-    #     landding_pad
-    #     jump .Rtarget
-    # SCFIIEtarget:
     def build_target_island(self, ori_line, padding_line):
+        '''used in "insert" moving
+        mark several lines as "pinned_island", insert them into codes, and modify the original label
+        they will "float" in the code, but always "pin" in the address
+        a normal form:
+        SCFIIBtarget:
+            jump island_end
+            .org (padding to ...)
+        target:
+            landding_pad
+            jump .Rtarget
+        SCFIIEtarget:'''
         label = ori_line.get_label()
         modified_label = '.scfi_real_'+label
         ori_line.set_str(ori_line.replace(label, modified_label))
@@ -530,14 +533,13 @@ class SCFIAsm(AsmSrc):
     def read_label_address(self, label):
         return self.label_address[label]
 
-    # only reorder target, not branches
-    # use insert or padding
-    # slot_alloc: FSTMET (align to first met), DETERMIN (predetermined)
-    # slot_type: variable_width, replace_8_bits
-    # assumptions: targets are all (function) labels
-    #              each branch has only one tag
-    #              each target has only one tag
     def only_move_targets(self, move_method=PADDING, slot_alloc=FSTMET, optimize_round=0):
+        '''only reorder target, not branches
+        use insert or padding
+        slot_alloc: FSTMET (align to first met), DETERMIN (predetermined)
+        assumptions: targets are all (function) labels
+                    each branch has only one tag
+                    each target has only one tag'''
         # attributes set:
         # first_met_tags = first time met a tag, which means use it nature slot
         # met_tags = tags met already, which means use the slot equals to the first one

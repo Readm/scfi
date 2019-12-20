@@ -113,6 +113,13 @@ class Line(str):
     def is_section_directive(self):
         return True if self.is_directive and self.get_directive_type() in ['.section', '.data', '.text'] else False
 
+    def get_section(self):
+        if not self.is_section_directive:
+            return False
+        if self.get_directive_type() in ['.data', '.text']:
+            return self.get_directive_type()
+        return self.split(None, 1)[-1]
+
     @property
     def is_loc_directive(self):
         return True if self.is_directive and self.get_directive_type() == '.loc' else False
@@ -147,6 +154,7 @@ class AsmSrc(str):
         self.HEAD = self.lines[0]
         self.labels = dict()
         self.label_list = []  # in order
+        self.section_lines = []
 
         self.functions = []   # name strings
         self.line_hash_index = dict()
@@ -162,6 +170,7 @@ class AsmSrc(str):
                     '"', '')] = int(file_num)
 
             if line.is_section_directive:
+                self.section_lines.append(line)
                 current_section = line
             elif line.is_instruction:
                 line.set_section_declaration(current_section)
@@ -326,6 +335,9 @@ class AsmSrc(str):
             if line.is_instruction:
                 declare = copy.deepcopy(line.section_declaration)
                 self.insert_before(declare, lines[0])
+
+    def get_sections(self):
+        return [line.get_section() for line in self.section_lines]
 
     @classmethod
     def read_file(cls, path, src_path=''):
