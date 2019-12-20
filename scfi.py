@@ -348,15 +348,10 @@ class SCFIAsm(AsmSrc):
             logger.debug("tag %s \t-> %s \t%x(%dbits)" %
                          (key, code[key], int(code[key], 2), len(code[key])))
 
-    def union_text(self):
-        '''Force all executable section to be .text, used in C++'''
-        for line in self.section_lines:
-            line.set_str('\t.text')
-
     def compile_tmp(self, cmd='', update_label=True):
         logger.info('compiling...')
         with open(self.tmp_asm_path, 'w') as f:
-            f.writelines((i+'\n' for i in self.traverse_lines()))
+            f.writelines((str(i)+'\n' for i in self.traverse_lines()))
         if not cmd:
             cmd = 'as %s -o %s' % (self.tmp_asm_path, self.tmp_obj_path)
         logger.debug(cmd)

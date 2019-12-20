@@ -15,7 +15,8 @@
       + [x]  inserting
         + [ ]  optimize
       + [ ] fix same slot  
-  + [x]  C++ support (section union)
+  + [ ]  C++ support (section union)
+    + [ ]  tried, but didn't work
   + [ ]  language support
     + [x]  X86
     + [ ]  ARM
