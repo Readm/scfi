@@ -10,17 +10,28 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('SCFI')
 
+X86 = 0
+ARM = 1
+RISCV = 2
+ATT = 0
+INTEL = 1
+
+
 class Environment():
-    def __init__(self,isa='x86', syntax='att'):
-        self.isa='x86'
-        self.syntax='att'
-    
+    def __init__(self, isa=X86, syntax=ATT):
+        self.isa = X86
+        self.syntax = ATT
+
     @property
     def comment_character(self):
-        if self.isa=='x86': return '#'
-        if self.isa=='arm': return '@'
+        if self.isa == X86:
+            return '#'
+        if self.isa == ARM:
+            return '@'
 
-global_env=Environment('x86','att')
+
+global_env = Environment(X86, ATT)
+
 
 class Line(str):
     key_id = 0  # we need a unique id for each Line, otherwise we cannot distinguish different line with the same content
@@ -66,7 +77,7 @@ class Line(str):
 
     # TODO: fix it
     def __str__(self):
-        if self.new_str!= None:
+        if self.new_str != None:
             return str(self.new_str)
         return super().__str__()
 
@@ -181,7 +192,7 @@ class AsmSrc(str):
             yield p
             p = p.next
         yield p
-    
+
     def traverse_from(self, line):
         p = line
         while p.next != None:
@@ -284,7 +295,7 @@ class AsmSrc(str):
                 begin_line = begin_line.prev
             # if before this line, it's a section declaration, include it
             if begin_line.prev.is_section_directive:
-                begin_line= begin_line.prev
+                begin_line = begin_line.prev
 
             # find comment 'End function'
             while '# -- End function' not in end_line:
@@ -323,14 +334,3 @@ class AsmSrc(str):
             asm = cls(f.read())
             asm.update_debug_file_number(src_path)
             return asm
-
-
-if __name__ == '__main__':
-    asm = AsmSrc.read_file('./testcase/401.bzip.s')
-    s = set()
-    for line in asm.traverse_lines():
-        if line.get_opcode() == None:
-            continue
-        s.add(line.get_opcode())
-    from pprint import pprint
-    pprint(s)

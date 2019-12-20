@@ -12,6 +12,11 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('SCFI')
 
+PADDING = 0
+INSERT = 1
+FSTMET = 2
+DETERMIN = 3
+
 # attributes set:
 # 'reserved_tags': we add the instruction with tags, but did not decide its slot
 # 'tags', 'slots'
@@ -26,7 +31,7 @@ class ToolKit():
         self.landing_pad_len = landing_pad_len
         self.tmp_label_count = 0
 
-        if global_env.isa == 'x86':
+        if global_env.isa == X86:
             self.island_length = 11  # insert island length, the worst case
             self.island_head = 5  # length from island begin to landing pad, the worst case
 
@@ -35,7 +40,7 @@ class ToolKit():
         return '.scfi_tmp%d%s' % (self.tmp_label_count, info)
 
     def is_control_transfer(self, line):
-        if global_env.isa == 'x86':
+        if global_env.isa == X86:
             op = line.get_opcode()
             if not op:
                 return False
@@ -51,8 +56,8 @@ class ToolKit():
 
     def is_indirect_call(self, line):
         # remember to add rules for more languages
-        if global_env.isa == 'x86':
-            if global_env.syntax == 'att':
+        if global_env.isa == X86:
+            if global_env.syntax == ATT:
                 return True if line.is_instruction and 'call' in line and '*' in line else False
         raise Exception('Unsupported syntax or ISA')
 
@@ -77,8 +82,8 @@ class ToolKit():
         return Line('\t'+self.landing_pad)
 
     def jump_label(self, label):
-        if global_env.isa == 'x86':
-            if global_env.syntax == 'att':
+        if global_env.isa == X86:
+            if global_env.syntax == ATT:
                 return Line('\tjmp %s' % label)
         raise Exception('Unsupported syntax or ISA')
 
@@ -100,8 +105,8 @@ class ToolKit():
     # branch -> branch in CFI
     def modified_branch(self, line, type='', slots=[], slot_width=8, reserved=True):
         lines = []
-        if global_env.isa == 'x86':
-            if global_env.syntax == 'att':
+        if global_env.isa == X86:
+            if global_env.syntax == ATT:
                 if type == 'replace_8_bits':
                     call_expr = self.get_call_expr(line)
                     if reserved:
@@ -137,8 +142,8 @@ class ToolKit():
         raise Exception('Unsupported syntax or ISA')
 
     def set_branch_slot(self, line, slot):
-        if global_env.isa == 'x86':
-            if global_env.syntax == 'att':
+        if global_env.isa == X86:
+            if global_env.syntax == ATT:
                 if type == 'replace_8_bits':
                     line.replace('0x0', hex(slot))
 
@@ -209,7 +214,7 @@ class SCFIAsm(AsmSrc):
         self.valid_branch_tags = set()    # cfg contains more tags than our object
         self.valid_target_tags = set()
         self.tag_slot = dict()     # tag->(slot, bit width)
-        self.slot_type = 'variable_width' # or replace_8_bit
+        self.slot_type = 'variable_width'  # or replace_8_bit
 
         self.tag_target_count = dict()  # for huffman tree
         self.tag_branch_count = dict()
@@ -342,7 +347,8 @@ class SCFIAsm(AsmSrc):
             if len(code[key]) > self.max_variable_slot_bit_width:
                 code[key] = code[key][:self.max_variable_slot_bit_width]
             self.tag_slot[key] = (int(code[key], 2), len(code[key]))
-            logger.debug("tag %s \t-> %s \t%x(%dbits)"%(key,code[key],int(code[key], 2),len(code[key])))
+            logger.debug("tag %s \t-> %s \t%x(%dbits)" %
+                         (key, code[key], int(code[key], 2), len(code[key])))
 
     def compile_tmp(self, cmd='', update_label=True):
         logger.info('compiling...')
@@ -440,7 +446,7 @@ class SCFIAsm(AsmSrc):
 
     def insert_ideal_place(self, target_label, slot=None, align_label=''):
         target_label = '.scfi_real_'+target_label
-        if not (bool(slot!=None) ^ bool(align_label)):
+        if not (bool(slot != None) ^ bool(align_label)):
             raise Exception(
                 "Need ONE island align target")
         if align_label:
@@ -526,12 +532,12 @@ class SCFIAsm(AsmSrc):
 
     # only reorder target, not branches
     # use insert or padding
-    # slot_alloc: first_met, predetermined
+    # slot_alloc: FSTMET (align to first met), DETERMIN (predetermined)
     # slot_type: variable_width, replace_8_bits
     # assumptions: targets are all (function) labels
     #              each branch has only one tag
     #              each target has only one tag
-    def only_move_targets(self, move_method='padding', slot_alloc='first_met', optimize_round=0):
+    def only_move_targets(self, move_method=PADDING, slot_alloc=FSTMET, optimize_round=0):
         # attributes set:
         # first_met_tags = first time met a tag, which means use it nature slot
         # met_tags = tags met already, which means use the slot equals to the first one
@@ -547,25 +553,26 @@ class SCFIAsm(AsmSrc):
         for line in self.marked_branch_lst:
             prev = line.prev
             self.unlink_line(line)
-            if slot_alloc == 'first_met':
+            if slot_alloc == FSTMET:
                 for new_line in self.toolkit.modified_branch(line, type=self.slot_type, reserved=True)[::-1]:
                     if hasattr(new_line, 'reserved_tags'):
                         need_reprocessing_branches.append(new_line)
                     self.insert_after(new_line, prev)
-            elif slot_alloc == 'predetermined':
-                slots=[self.tag_slot[tag][0] for tag in line.tags]
-                if len(slots) > 1: raise Exception('Not implemented')
-                slot_width=max([self.tag_slot[tag][1] for tag in line.tags])
-                for new_line in self.toolkit.modified_branch(line, type=self.slot_type, reserved=False,slots=slots,slot_width=slot_width)[::-1]:
+            elif slot_alloc == DETERMIN:
+                slots = [self.tag_slot[tag][0] for tag in line.tags]
+                if len(slots) > 1:
+                    raise Exception('Not implemented')
+                slot_width = max([self.tag_slot[tag][1] for tag in line.tags])
+                for new_line in self.toolkit.modified_branch(line, type=self.slot_type, reserved=False, slots=slots, slot_width=slot_width)[::-1]:
                     self.insert_after(new_line, prev)
             else:
                 raise Exception("Unknown slot allocation.")
 
         # if use predetermined, we mark all tags allocated
-        if slot_alloc == 'first_met':
+        if slot_alloc == FSTMET:
             allocated_tags = set()
-        elif slot_alloc == 'predetermined':
-            allocated_tags =  self.valid_target_tags
+        elif slot_alloc == DETERMIN:
+            allocated_tags = self.valid_target_tags
 
         for line in self.marked_target_lst:
             first_met_tags = []
@@ -594,14 +601,14 @@ class SCFIAsm(AsmSrc):
                     raise Exception('Not implemented')
                 else:   # only one allocated tag
                     need_move.append(line)
-                    if slot_alloc=='first_met':
+                    if slot_alloc == FSTMET:
                         setattr(line, 'align_to_tags', line.met_tags)
-                    elif slot_alloc == 'predetermined':
-                        slots=[self.tag_slot[tag][0] for tag in line.tags]
-                        slot_width=max([self.tag_slot[tag][1] for tag in line.tags])
-                        setattr(line, 'slots',slots)
-                        setattr(line, 'slot_width',slot_width)
-                    
+                    elif slot_alloc == DETERMIN:
+                        slots = [self.tag_slot[tag][0] for tag in line.tags]
+                        slot_width = max([self.tag_slot[tag][1]
+                                          for tag in line.tags])
+                        setattr(line, 'slots', slots)
+                        setattr(line, 'slot_width', slot_width)
 
         logger.debug('All instructions marked.')
         # in first met, until now all instructions are marked by:
@@ -610,28 +617,35 @@ class SCFIAsm(AsmSrc):
         # in predetermined, we do not need the marks
 
         logger.debug('Moving...')
-        if move_method == 'padding':
+        if move_method == PADDING:
             for line in need_move:
-                if slot_alloc=='first_met':
+                if slot_alloc == FSTMET:
                     if len(line.align_to_tags) > 1:
                         raise Exception('Not implemented')
-                    padding_line = self.toolkit.padding_to_label(self.slot_bit_width, 'fsttag%s' % line.align_to_tags[0])
-                elif slot_alloc=='predetermined':
-                    padding_line = self.toolkit.padding_to_slot(line.slot_width,slot=line.slots[0])
+                    padding_line = self.toolkit.padding_to_label(
+                        self.slot_bit_width, 'fsttag%s' % line.align_to_tags[0])
+                elif slot_alloc == DETERMIN:
+                    padding_line = self.toolkit.padding_to_slot(
+                        line.slot_width, slot=line.slots[0])
                 self.insert_before(padding_line, line)
                 self.insert_after(self.toolkit.get_landing_pad_line(), line)
 
-        elif move_method == 'insert':
-            if need_move: self.mark_all_basic_blocks()
+        elif move_method == INSERT:
+            if need_move:
+                self.mark_all_basic_blocks()
             line_to_island = dict()
             for line in need_move:
-                if slot_alloc == 'first_met': 
-                    if len(line.align_to_tags) > 1: raise Exception('Not implemented')
-                    padding_line = self.toolkit.padding_to_label(self.slot_bit_width, 'fsttag%s' % line.align_to_tags[0])
-                elif slot_alloc == 'predetermined':
+                if slot_alloc == FSTMET:
+                    if len(line.align_to_tags) > 1:
+                        raise Exception('Not implemented')
+                    padding_line = self.toolkit.padding_to_label(
+                        self.slot_bit_width, 'fsttag%s' % line.align_to_tags[0])
+                elif slot_alloc == DETERMIN:
                     print(line+'use')
-                    padding_line = self.toolkit.padding_to_slot(line.slot_width,slot=line.slots[0])
-                island = self.build_target_island(line, padding_line=padding_line)
+                    padding_line = self.toolkit.padding_to_slot(
+                        line.slot_width, slot=line.slots[0])
+                island = self.build_target_island(
+                    line, padding_line=padding_line)
                 line_to_island[line] = island
             move_lst = [x for x in need_move]
             while move_lst:
@@ -640,11 +654,12 @@ class SCFIAsm(AsmSrc):
                 self.compile_tmp()
                 line_ideal_place = dict()
                 for x in move_lst:
-                    if slot_alloc == 'first_met': 
+                    if slot_alloc == FSTMET:
                         line_ideal_place[x] = self.insert_ideal_place(
-                        x.get_label(), align_label='fsttag%s' % x.align_to_tags[0])
-                    elif slot_alloc == 'predetermined':
-                        line_ideal_place[x] = self.insert_ideal_place(x.get_label(),slot=line.slots[0])
+                            x.get_label(), align_label='fsttag%s' % x.align_to_tags[0])
+                    elif slot_alloc == DETERMIN:
+                        line_ideal_place[x] = self.insert_ideal_place(
+                            x.get_label(), slot=line.slots[0])
                 move_lst.sort(key=lambda x: line_ideal_place[x])
                 search_begin = self.label_address['.scfi_real_' +
                                                   move_lst[0].get_label()]
@@ -659,15 +674,15 @@ class SCFIAsm(AsmSrc):
         for _ in range(optimize_round):
             logger.info('Optimizing...')
             self.compile_tmp()
-            if move_method == 'padding':
+            if move_method == PADDING:
                 pass
-            elif move_method == 'insert':
+            elif move_method == INSERT:
                 for line in need_move:
                     self.fix_island_address(line_to_island[line])
 
         # compile and get the slots
         self.compile_tmp()
-        if slot_alloc == 'first_met':
+        if slot_alloc == FSTMET:
             for tag in self.inside_valid_tags:
                 self.tag_slot[tag] = self.read_label_address(
                     'fsttag%s' % str(tag)) & ((1 << self.slot_bit_width)-1)
@@ -678,27 +693,3 @@ class SCFIAsm(AsmSrc):
                 line, self.tag_slot[line.reserved_tags[0]])
         for line in need_reprocessing_targets:
             pass
-
-
-if __name__ == '__main__':
-    logger.setLevel(logging.DEBUG)
-    #spec_lst=['400.perlbench', '401.bzip2', '403.gcc', '429.mcf', '445.gobmk', '456.hmmer', '458.sjeng', '462.libquantum', '464.h264ref', '471.omnetpp', '473.astar', '483.xalancbmk']
-    spec_lst = ['400.perlbench']
-    for name in spec_lst:
-        filePath = '/home/readm/fast-cfi/workload/%s/work/fastcfi_final.s' % name
-        src_path = '/home/readm/fast-cfi/workload/%s/work/' % name
-        cfg_path = '/home/readm/fast-cfi/workload/%s/work/fastcfi.info' % name
-        asm = SCFIAsm.read_file(filePath, src_path=src_path)
-        asm.tmp_asm_path = src_path+'scfi_tmp.s'
-        asm.tmp_obj_path = src_path+'scfi_tmp.o'
-        asm.tmp_dmp_path = src_path+'scfi_tmp.dump'
-
-        asm.mark_all_instructions(cfg=CFG.read_from_llvm(cfg_path))
-        asm.move_file_directives_forward()
-        asm.huffman_slot_allocation()
-        asm.only_move_targets(move_method='padding',slot_alloc='predetermined')
-        os.chdir(src_path)
-        asm.compile_tmp()
-        link(asm.tmp_obj_path, src_path+'scfi_tmp')
-
-        run_cycle(size='test', filelst=['./scfi_tmp'], lst=[name])
