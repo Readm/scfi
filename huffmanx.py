@@ -14,7 +14,7 @@ class Node():
             return self.parent.code + ('0' if self is self.parent.left else '1')
 
 
-def codebook(iter, weight_fun=lambda x, y: 2*(x+y)):
+def codebook(iter, weight_fun=lambda x, y: x+y):
     """
     Provided an iterable of 2-tuples in (symbol, weight) format, generate a
     Huffman codebook, returned as a dictionary in {symbol: code} format.

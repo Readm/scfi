@@ -332,13 +332,16 @@ class SCFIAsm(AsmSrc):
         from huffmanx import codebook
         if source == 'target':
             code = codebook([(tag, self.tag_target_count[tag])
-                             for tag in self.valid_target_tags])
+                             for tag in self.valid_target_tags],
+                            weight_fun=lambda x, y: 2*(x+y))
         elif source == 'branch':
             code = codebook([(tag, self.tag_branch_count[tag])
-                             for tag in self.valid_target_tags])
+                             for tag in self.valid_target_tags],
+                            weight_fun=lambda x, y: 2*(x+y))
         elif source == 'both':
             code = codebook([(tag, self.tag_count[tag])
-                             for tag in self.valid_target_tags])
+                             for tag in self.valid_target_tags],
+                            weight_fun=lambda x, y: 2*(x+y))
         else:
             raise Exception('Wrong source for huffman slot allocation.')
         for key in code.keys():
@@ -691,10 +694,90 @@ class SCFIAsm(AsmSrc):
         for line in need_reprocessing_targets:
             pass
 
-    # mixed: padding (<threshold), trampline (>threshold)
-    def move_targets_mix(self, trampline_threshold=5):
-        logger.info('Only_move_targets_nature, move method: mix, threshold: %d' % trampline_threshold)
+    def try_move_slot(self, tag, target_slot):  # todo
+        return
+
+    # mixed: padding (<threshold), trampline (>threshold), determined slot, single slot
+    def move_targets_mix(self, trampline_threshold=6):
+        logger.info(
+            'Only_move_targets_nature, move method: mix, threshold: %d bit(s)' % trampline_threshold)
         self.cut_one_side_tags()
-    
+
+        # attributes set:
+
+        need_move = []
+
+        # modify all branches
+        for line in self.marked_branch_lst:
+            prev = line.prev
+            self.unlink_line(line)
+            slots = [self.tag_slot[tag][0] for tag in line.tags]
+            if len(slots) > 1:
+                raise Exception('Not implemented')
+            slot_width = max([self.tag_slot[tag][1] for tag in line.tags])
+            for new_line in self.toolkit.modified_branch(line, type=self.slot_type, reserved=False, slots=slots, slot_width=slot_width)[::-1]:
+                self.insert_after(new_line, prev)
+
+        allocated_tags = self.valid_target_tags
+
+        for line in self.marked_target_lst:
+            need_move.append(line)
+            slots = [self.tag_slot[tag][0] for tag in line.tags]
+            slot_width = max([self.tag_slot[tag][1]
+                              for tag in line.tags])
+            setattr(line, 'slots', slots)
+            setattr(line, 'slot_width', slot_width)
+
+        logger.debug('All instructions marked.')
+        # in first met, until now all instructions are marked by:
+        # branch: reserved_tags
+        # target: reserved_tags, align_to
+        # in predetermined, we do not need the marks
+
+        logger.debug('Moving...')
+        if need_move:
+            self.mark_all_basic_blocks()
+        line_to_island = dict()
+
+        need_insert = []
+        for line in need_move:
+            if line.slot_width <= trampline_threshold:  # PADDING:
+                padding_line = self.toolkit.padding_to_slot(
+                    line.slot_width, slot=line.slots[0])
+                self.insert_before(padding_line, line)
+                self.insert_after(self.toolkit.get_landing_pad_line(), line)
+
+            else:  # INSERT:
+                need_insert.append(line)
+                padding_line = self.toolkit.padding_to_slot(
+                    line.slot_width, slot=line.slots[0])
+                island = self.build_target_island(
+                    line, padding_line=padding_line)
+                line_to_island[line] = island
+
+        total_target_num = len(need_move)
+        padding_target_num = len(need_move)-len(need_insert)
+        logger.info("Padding: %d (%02f%%), Trampoline: %d (%02f%%)" % (padding_target_num, padding_target_num /
+                                                                   total_target_num * 100, total_target_num-padding_target_num, 100-(padding_target_num/total_target_num * 100)))
+
+        while need_insert:
+            logger.debug('Moving: %d/%d' %
+                         (total_target_num-padding_target_num-len(need_insert)+1, total_target_num-padding_target_num))
+            self.compile_tmp()
+            line_ideal_place = dict()
+            for x in need_insert:
+                line_ideal_place[x] = self.insert_ideal_place(
+                    x.get_label(), slot=line.slots[0])
+            need_insert.sort(key=lambda x: line_ideal_place[x])
+            search_begin = self.label_address['.scfi_real_' +
+                                              need_insert[0].get_label()]
+            self.insert_island(
+                line_to_island[need_insert[0]], search_begin, line_ideal_place[need_insert[0]])
+            logger.debug('insert:%s' % need_insert[0])
+            need_insert.pop(0)
+
+        # compile and get the slots
+        self.compile_tmp()
+
     def branch_instrument(self):
         pass

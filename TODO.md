@@ -11,10 +11,8 @@
       + [x] huffman slot allocation
     + [x]  重排
       + [x]  padding
-        + [ ]  optimize
       + [x]  inserting
-        + [ ]  optimize
-      + [ ] fix same slot  
+      + [x]  mixed
   + [ ]  language support
     + [x]  X86
     + [ ]  ARM

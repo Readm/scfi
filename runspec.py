@@ -5,6 +5,7 @@ import hashlib
 import os
 import subprocess
 import pickle
+import shutil,sys,traceback
 
 
 def tqdm(s): return s  # disable tqdm in pypy
@@ -15,6 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger('SCFI')
 
 spec_path = '/home/readm/SPEC2006'
+work_path = '/home/readm/scfi/workload/'
 
 
 def compiles(path, cmd):
@@ -55,7 +57,7 @@ def compile_all():
                 shutil.copytree(work_path+cmds.name+'/src', dirpath)
                 compiles(dirpath, build_cmd)
             except Exception as e:
-                with open('/home/readm/fast-cfi/log/error.log', 'a') as f:
+                with open('/home/readm/scfi/log/error.log', 'a') as f:
                     f.write(cmds.name+traceback.format_exc())
 
 
@@ -63,7 +65,7 @@ def prepare_all(size='ref'):
     lst = ['400.perlbench', '401.bzip2', '403.gcc', '429.mcf', '445.gobmk', '456.hmmer', '458.sjeng',
            '462.libquantum', '464.h264ref', '471.omnetpp', '473.astar', '483.xalancbmk']  # CINT2006
     for i in lst:
-        path = '/home/readm/fast-cfi/workload/'+i
+        path = '/home/readm/scfi/workload/'+i
         copy_data(path, size=size)
 
 
