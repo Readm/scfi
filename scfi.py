@@ -329,7 +329,7 @@ class SCFIAsm(AsmSrc):
                          ' -> \t'+hex(self.tag_slot[tag][0]))
 
     def huffman_slot_allocation(self, source='target'):
-        from huffman import codebook
+        from huffmanx import codebook
         if source == 'target':
             code = codebook([(tag, self.tag_target_count[tag])
                              for tag in self.valid_target_tags])
@@ -690,3 +690,11 @@ class SCFIAsm(AsmSrc):
                 line, self.tag_slot[line.reserved_tags[0]])
         for line in need_reprocessing_targets:
             pass
+
+    # mixed: padding (<threshold), trampline (>threshold)
+    def move_targets_mix(self, trampline_threshold=5):
+        logger.info('Only_move_targets_nature, move method: mix, threshold: %d' % trampline_threshold)
+        self.cut_one_side_tags()
+    
+    def branch_instrument(self):
+        pass
