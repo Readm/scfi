@@ -23,7 +23,7 @@
     + [ ] C++ sections
 + [ ] CFG
   + [x] LLVM icall
-  + [ ] C++ 虚函数
+  + [x] C++ 虚函数
   + [ ] switch 等其他
 
 ## leaving problems

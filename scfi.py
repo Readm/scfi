@@ -4,7 +4,6 @@ import subprocess
 
 
 from asmplayground import *
-from runspec import run_cycle, link
 import os
 
 
@@ -175,7 +174,7 @@ class CFG():
         # remember: the tags is in a list, we support multi tags
 
     @classmethod
-    def read_from_llvm(cls, path):
+    def read_from_llvm_fastcfi(cls, path):
         with open(path) as f:
             target, branch = dict(), dict()
             for line in f:
@@ -191,6 +190,121 @@ class CFG():
                 if target[key] not in valid_tags:
                     target.pop(key)
             return cls(target=target, branch=branch)
+
+    @classmethod
+    def read_from_llvm_pass(cls, path):
+        def class_strip(s):
+            import re
+            pattern = re.compile(r"class\.[^:]+::[^\.]+\.[\.\d]+")
+            lst=re.findall(pattern,s)
+            for _type in lst:
+                pattern = re.compile(r"class\.[^:]+::[^\.]+")
+                new_type = re.match(pattern, _type).group()
+                s=s.replace(_type, new_type)
+            return s
+
+        with open(path) as f:
+            target, branch = dict(), dict()
+            # first read the cfg in type
+            virtual_branch=dict()
+            virtual_target=dict()
+            pointer_branch=dict()
+            pointer_target=dict()
+
+            _type = ""
+            items = set()
+            current_set = None #empty
+            for line in f:
+                if line.startswith('Virtual Function Branches:'): current_set=virtual_branch; continue
+                if line.startswith('Virtual Function Targets:'): current_set=virtual_target; continue
+                if line.startswith('Function Pointer Branches:'): current_set=pointer_branch; continue
+                if line.startswith('Function Pointer Targets:'): current_set=pointer_target; continue
+                if line.startswith('Function Pointer CFG:'): current_set=None; continue
+
+                if current_set==None: continue
+                if line.startswith('Type:'):  
+                    _type=class_strip(line.strip()[6:]); 
+                    #print(_type)
+                    continue
+                try:
+                    current_set[_type].add(line.strip())
+                except KeyError:
+                    current_set[_type]=set([line.strip()])
+            
+            # remove items in pointer_* if in virtual_*
+            rm_lst=[]
+            for key in pointer_branch.keys():
+                if key in virtual_branch.keys():
+                    rm_lst.append(key)
+            for key in rm_lst:
+                del pointer_branch[key]
+            rm_lst=[]
+            for key in pointer_target.keys():
+                if key in virtual_target.keys():
+                    rm_lst.append(key)
+            for key in rm_lst:
+                del pointer_target[key]
+            
+            tmp_branch = dict()
+            for key in virtual_branch.keys():
+                for item in virtual_branch[key]:
+                    try:
+                        tmp_branch[item].add(key)
+                    except KeyError:
+                        tmp_branch[item]=set([key])
+            for key in pointer_branch.keys():
+                for item in pointer_branch[key]:
+                    try:
+                        tmp_branch[item].add(key)
+                    except KeyError:
+                        tmp_branch[item]=set([key])
+
+            
+            # merge multi type of branchs
+            merge_type=dict() # from type to a merge number
+            merge_type_count = 0
+            for item in tmp_branch.keys():
+                if len(tmp_branch[item])==1: continue
+                new_type_lst=[]
+                for _type in tmp_branch[item]:
+                    # map to new type recursely
+                    new_type=_type
+                    while new_type in merge_type.keys():  new_type=merge_type[new_type]
+                    new_type_lst.append(new_type)
+                new_merge_type = 'Merged_type_%d' %merge_type_count
+                merge_type_count+=1
+                for new_type in new_type_lst: 
+                    merge_type[new_type]=new_merge_type
+                tmp_branch[item]=set([new_merge_type])
+            
+
+            target, branch = dict(), dict()
+            for br_set in [virtual_branch, pointer_branch]:
+                for key in br_set.keys():
+                    new_type = key
+                    while new_type in merge_type.keys(): new_type=merge_type[new_type]
+                    for item in br_set[key]:
+                        try:  
+                            branch[item].add(new_type)
+                            if len(branch[item]) >1: logger.warn('Multi-tag branch found: %s'%item)
+                        except KeyError: 
+                            branch[item]=set([new_type])
+            for tg_set in [virtual_target, pointer_target]:
+                for key in tg_set.keys():
+                    new_type = key
+                    while new_type in merge_type.keys(): new_type=merge_type[new_type]
+                    for item in tg_set[key]:
+                        try:  
+                            target[item].add(new_type)
+                            if len(target[item]) >1: logger.warn('Multi-tag target found: %s'%item)
+                        except KeyError: 
+                            target[item]=set([new_type])
+
+            for item in target.keys():
+                print(len(target[item]))
+            # pprint(branch,width=-1)
+            # pprint(target,width=-1)
+
 
     def convert_filename_to_number(self, file_numbers):
         '''convert the string:y:z to x y z form'''
