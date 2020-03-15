@@ -30,8 +30,8 @@ class ToolKit():
         self.tmp_label_count = 0
 
         if global_env.isa == X86:
-            self.island_length = 11  # insert island length, the worst case
-            self.island_head = 5  # length from island begin to landing pad, the worst case
+            self.trampo_length = 11  # insert trampo length, the worst case
+            self.trampo_head = 5  # length from trampo begin to landing pad, the worst case
 
     def get_tmp_label(self, info=''):
         self.tmp_label_count += 1
@@ -145,6 +145,11 @@ class ToolKit():
                 if type == 'replace_8_bits':
                     line.replace('0x0', hex(slot))
 
+    def padding_ID_lines(self, line, slots, IDs):
+        '''Arrange slots and traditonal IDs before a multi-tag target'''
+        pass
+
+tk = ToolKit()
 
 class PaddingLine(Line):
     def __init__(self, s, bit_width=8):
@@ -160,6 +165,18 @@ class PaddingLine(Line):
         return cls('\t.org ((.-0x%x-1)/(1<<%d)+1)*(1<<%d)+0x%x, 0x90 \t# pad to 0x%x, in width %d' %
                    (slot, bit_width, bit_width, slot, slot, bit_width))
 
+class IDLine(Line):
+    def __init__(self, s):
+        super().__init__(s)
+
+    @classmethod
+    def get_ID_line(cls, value, offset):
+        s=''
+        v=value
+        for i in range(offset):
+            s=hex(v&0xff)+', '+s
+            v=v>>8
+        return cls('\t.byte\t'+s[:-2])
 
 class CFG():
     '''Label based CFG, each target/branch has tags(labels)
@@ -286,7 +303,8 @@ class CFG():
                     for item in br_set[key]:
                         try:  
                             branch[item].add(new_type)
-                            if len(branch[item]) >1: logger.warn('Multi-tag branch found: %s'%item)
+                            if len(branch[item]) >1: 
+                                logger.warn('Multi-tag branch found: %s'%item)
                         except KeyError: 
                             branch[item]=set([new_type])
             for tg_set in [virtual_target, pointer_target]:
@@ -296,41 +314,202 @@ class CFG():
                     for item in tg_set[key]:
                         try:  
                             target[item].add(new_type)
-                            if len(target[item]) >1: logger.warn('Multi-tag target found: %s'%item)
+                            if len(target[item]) >1: 
+                                logger.debug('Multi-tag target found: %d %s'%(len(target[item]),item))
                         except KeyError: 
                             target[item]=set([new_type])
-
-            for item in target.keys():
-                print(len(target[item]))
             # pprint(branch,width=-1)
             # pprint(target,width=-1)
 
+        return cls(target, branch)
 
     def convert_filename_to_number(self, file_numbers):
         '''convert the string:y:z to x y z form'''
         for branch_loc in [k for k in self.branch.keys()]:
-            new_key = str(file_numbers[branch_loc.split(':')[0]])
-            new_key += ' '+' '.join(branch_loc.split(':')[1:3])
-            self.branch[new_key] = self.branch[branch_loc]
-            self.branch.pop(branch_loc)
+            try:
+                new_key = str(file_numbers[branch_loc.split(':')[0]])
+                new_key += ' '+' '.join(branch_loc.split(':')[1:3])
+                self.branch[new_key] = self.branch[branch_loc]
+                self.branch.pop(branch_loc)
+            except KeyError: # some branches in CFG do not appera in assemble file
+                continue
+
+class SLOT_INFO():
+    def __init__(self, value, width, is_traditional):
+        '''Single Slot:
+        Bool is_traditional: if true, the slot is a traditional CFI ID, else, slot
+        value: slot value/ ID value
+        width:  slot width/ ID value offset
+        Traditional offset:   ...3|2|1|0 + landing pad, each ID is one byte.
+        '''
+        self.value = value
+        self.width = width
+        self.is_traditional = is_traditional
+    
+    @property #alias
+    def offset(self): return self.width
+
+    @classmethod
+    def new_slot(cls, value, width):
+        return cls(value, width, False)
+    @classmethod
+    def new_ID(cls, value, width):
+        return cls(value, width, True)
+
+
+
+class SLOTS_INFO():
+    def __init__(self, slots):
+        '''Contains multiple SLOT_INFO'''
+        self.slots=slots
+
+    def build_prefix_line_and_label(self, label_line):
+        '''Build target prefix line and label based on the slot info. Output pattern:
+        multi tag: |slot1 landingpad|...|slot2|.....|slot3|....|jump label|IDs|label|
+        only one slot: padding|label|landingpad
+        only IDs: IDs|label|landingpad
+        '''
+        # Build traditional ID prefix first
+        tra_slots=[s for s in self.slots if s.is_traditional]
+        tra_prefix=0
+        tra_prefix_width=0
+        for s in tra_slots:
+            tra_prefix_width=max(tra_prefix_width, s.offset+1)
+            tra_prefix ^= s.value<<(s.offset*8)
+        
+        real_slot=[s for s in self.slots if not s.is_traditional]
+        real_slot.sort(key=lambda x: x.width)
+
+        # only IDs
+        if not real_slot:
+            return [
+                IDLine.get_ID_line(tra_prefix, tra_prefix_width),
+                label_line,
+                tk.get_landing_pad_line()
+            ]
+
+        # get first slot
+        start=real_slot.pop()
+        self.tmp_width=start.width
+        self.min_value=start.value
+        self.max_value=start.value+tk.landing_pad_len
+        self.hit_set=set(range(self.min_value,self.max_value))
+
+        #if only one slot
+        if not real_slot:
+            # no IDs
+            if not tra_prefix_width:
+                return [
+                    PaddingLine.pad_to_slot(start.value,start.width),
+                    label_line,
+                    tk.get_landing_pad_line()
+                ]
+            else:
+                new_slot_value = (start.value - tra_prefix_width) % (1<< start.width)
+                return[
+                    PaddingLine.pad_to_slot(new_slot_value,start.width),
+                    IDLine.get_ID_line(tra_prefix, tra_prefix_width),
+                    label_line,
+                    tk.get_landing_pad_line()
+                ]
+            
+        raise Exception('Multi Real Slot!')
+        # # multi-tag
+        # def hit(i, length): 
+        #     for j in range(i,i+length): 
+        #         if j in self.hit_set: return True
+        #     return False
+        # def mark(i,length):
+        #     for j in range(i,i+length): self.hit_set.add(j)
+        #     self.min_value=min(self.min_value, i)
+        #     self.max_value=max(self.max_value, i+length)
+
+        # # build slot map
+        # while real_slot:
+        #     s=real_slot.pop()
+        #     # find in side
+        #     found=False
+        #     for try_begin in range(self.min_value, self.max_value):
+        #         if hit(try_begin, tk.landing_pad_len): continue
+        #         mask=(1<<s.width)-1
+        #         if try_begin & mask == s.value:
+        #             mark(try_begin, tk.landing_pad_len)
+        #             found=True
+        #     if found: continue
+
+        #     # find out side
+        #     while True:
+        #         # find backard
+        #         try_begin=(self.min_value>>s.width<<s.width)+s.value
+        #         if try_begin>self.min_value: try_begin-=1<<s.width
+        #         if not hit(try_begin, tk.landing_pad_len): mark(try_begin, tk.landing_pad_len); break
+        #         # find foreward
+        #         try_begin=(self.max_value>>s.width<<s.width)+s.value
+        #         if try_begin<self.max_value: try_begin+=1<<s.width
+        #         if not hit(try_begin, tk.landing_pad_len): mark(try_begin, tk.landing_pad_len); break
+
+        # # end build slot map, adjust all to positive number, adjust width
+        # def has_negative(s):
+        #     for i in s: 
+        #         if i <0: return True
+        #     return False
+        # def min_width(s):
+        #     lst=list(s)
+        #     w = 1
+        #     for i in lst:
+        #         while (1<<w) <= i: w+=1
+        #     return w
+
+        # while has_negative(self.hit_set):
+        #     width = min_width(self.hit_set)
+        #     self.hit_set={i+(1<<width) for i in self.hit_set}
+        # print(self.hit_set)
+        # final_width=min_width(self.hit_set)
+        # min_v = min(self.hit_set)
+        # max_v = max(self.hit_set)
+        # #if max_v + tra_prefix_width+6
+
+        # # building
+        # lines=[Line('\t# multi slot')]
+        # pointer=min_v
+        # while pointer<=max_v:
+        #     if pointer not in self.hit_set: pointer+=1; continue
+
+        #     lines.append(PaddingLine.pad_to_slot(pointer,final_width))
+        #     lines.append(tk.get_landing_pad_line())
+        #     if not hit(pointer+tk.landing_pad_len,6): # we assume the jump is at most 6 bytes
+        #         lines.append(tk.jump_label(label_line.get_label()))
+        #     pointer+=tk.landing_pad_len
+        # if tra_prefix_width:
+        #     lines.append(IDLine.get_ID_line(tra_prefix, tra_prefix_width))
+        #     lines.append(label_line)
+        #     lines.append(tk.get_landing_pad_line())
+        
+        # return lines
 
 
 class SCFIAsm(AsmSrc):
     def __init__(self, s, cfg=CFG(), src_path=''):
         super().__init__(s)
         self.cfg = cfg
-        self.slot_bit_width = 8
+        self.default_fixed_slot_bit_width = 8
+        self.max_padding_slot_width = 6
         self.max_variable_slot_bit_width = 10
+
         self.branch_lst = []  # in order
         self.marked_branch_lst = []  # in order
         self.marked_target_lst = []
-        self.valid_branch_tags = set()    # cfg contains more tags than our object
+
+        self.valid_branch_tags = set()    # since cfg contains more tags than our object
         self.valid_target_tags = set()
-        self.tag_slot = dict()     # tag->(slot, bit width)
+
+        self.both_valid_tag = set() # after cutting one side tags, the tags remained
+
+        self.tag_slot = dict()     # tag->SLOT_INFO
         self.slot_type = 'variable_width'  # or replace_8_bit
 
-        self.tag_target_count = dict()  # for huffman tree
         self.tag_branch_count = dict()
+        self.tag_target = dict() # tag-> target with this tag
         self.tag_count = dict()
 
         self.label_address = dict()
@@ -356,7 +535,7 @@ class SCFIAsm(AsmSrc):
         self.mark_all_branches()
         self.mark_all_targets()
         logger.info('marked all instructions')
-        logger.info('slot bit width: %d' % self.slot_bit_width)
+        logger.info('default slot bit width: %d' % self.default_fixed_slot_bit_width)
         logger.info('icalls: %d' % len(self.branch_lst))
         logger.info('marked_icalls: %d' % len(self.marked_branch_lst))
         logger.info('marked_targets: %d' % len(self.marked_target_lst))
@@ -381,6 +560,9 @@ class SCFIAsm(AsmSrc):
                     except KeyError:
                         self.tag_count[tag] = 1
 
+    def tag_target_count(self, tag):
+        return len(self.tag_target)
+
     def mark_all_targets(self):
         for line in self.label_list:
             label = line.get_label()
@@ -390,9 +572,9 @@ class SCFIAsm(AsmSrc):
                 for tag in self.cfg.target[label]:
                     self.valid_target_tags.add(tag)
                     try:
-                        self.tag_target_count[tag] += 1
+                        self.tag_target[tag].add(line)
                     except KeyError:
-                        self.tag_target_count[tag] = 1
+                        self.tag_target[tag]=set([line])
                     try:
                         self.tag_count[tag] += 1
                     except KeyError:
@@ -421,21 +603,22 @@ class SCFIAsm(AsmSrc):
             i for i in self.marked_branch_lst if len(i.tags) > 0]
         new = len(self.marked_branch_lst)
         logger.debug('Marked branch: %d -> %d' % (old, new))
+        self.both_valid_tag = {t for t in self.valid_branch_tags if t in self.valid_target_tags}
 
     def random_slot_allocation(self):
         '''Fixed slot bit width. Use hash, this allocation requires no compile'''
         for target in self.marked_target_lst:
             slots = []
             for tag in target.tags:
-                slot = hash(tag) & ((1 << self.slot_bit_width)-1)
-                self.tag_slot[tag] = (slot, self.slot_bit_width)
+                slot = hash(tag) & ((1 << self.default_fixed_slot_bit_width)-1)
+                self.tag_slot[tag] = (slot, self.default_fixed_slot_bit_width)
                 slots.append(slot)
             setattr(target, 'slots', slots)
         for branch in self.marked_branch_lst:
             slots = []
             for tag in branch.tags:
-                slot = hash(tag) & ((1 << self.slot_bit_width)-1)
-                self.tag_slot[tag] = (slot, self.slot_bit_width)
+                slot = hash(tag) & ((1 << self.default_fixed_slot_bit_width)-1)
+                self.tag_slot[tag] = (slot, self.default_fixed_slot_bit_width)
                 slots.append(slot)
             setattr(target, 'slots', slots)
         for tag in self.tag_slot.keys():
@@ -445,7 +628,7 @@ class SCFIAsm(AsmSrc):
     def huffman_slot_allocation(self, source='target'):
         from huffmanx import codebook
         if source == 'target':
-            code = codebook([(tag, self.tag_target_count[tag])
+            code = codebook([(tag, self.tag_target_count(tag))
                              for tag in self.valid_target_tags],
                             weight_fun=lambda x, y: 2*(x+y))
         elif source == 'branch':
@@ -511,13 +694,13 @@ class SCFIAsm(AsmSrc):
                 tmp_labels.append(tmp_label)
         self.basic_block_labels = tmp_labels
 
-    def build_target_island(self, ori_line, padding_line):
+    def build_target_trampo(self, ori_line, padding_line):
         '''used in "insert" moving
-        mark several lines as "pinned_island", insert them into codes, and modify the original label
+        mark several lines as "pinned_trampo", insert them into codes, and modify the original label
         they will "float" in the code, but always "pin" in the address
         a normal form:
         SCFIIBtarget:
-            jump island_end
+            jump trampo_end
             .org (padding to ...)
         target:
             landding_pad
@@ -538,8 +721,8 @@ class SCFIAsm(AsmSrc):
         lines.append(Line('\tjmp\t%s' % modified_label))
         lines.append(Line('.scfi_ie_%s:' % label))
 
-        setattr(lines[0], 'island_label', label)
-        setattr(lines[0], 'island_end', lines[-1])
+        setattr(lines[0], 'trampo_label', label)
+        setattr(lines[0], 'trampo_end', lines[-1])
         setattr(lines[0], 'padding_line', padding_line)
 
         # fix .size
@@ -556,26 +739,27 @@ class SCFIAsm(AsmSrc):
                     break
 
         for line in lines:
-            setattr(line, 'on_island', True)
+            setattr(line, 'on_trampo', True)
         return lines
 
-    def insert_ideal_place(self, target_label, slot=None, align_label=''):
+    def insert_ideal_place(self, target_label, width, slot=None, align_label=''):
         target_label = '.scfi_real_'+target_label
         if not (bool(slot != None) ^ bool(align_label)):
             raise Exception(
-                "Need ONE island align target")
+                "Need ONE trampo align target")
         if align_label:
             slot = self.read_label_address(
-                align_label) % (1 << self.slot_bit_width)
-        insert_slot = (slot-self.toolkit.island_head) % (1 <<
-                                                         self.slot_bit_width)
-        ideal_place = self.label_address[target_label] >> self.slot_bit_width << self.slot_bit_width
+                align_label) % (1 << width)
+        insert_slot = (slot-self.toolkit.trampo_head) % (1 <<
+                                                         width)
+        ideal_place = self.label_address[target_label] >> width << width
         ideal_place += insert_slot
         if ideal_place < self.label_address[target_label]:
-            ideal_place += 1 << self.slot_bit_width
+            ideal_place += 1 << width
         return ideal_place
 
-    def insert_island(self, island, search_begin, ideal_place):
+    def insert_trampo(self, trampo, search_begin, ideal_place, width):
+        '''Insert trampo into a place, first try the ideal_place, from search_begin'''
         last_label = None
         for tmp_label in self.basic_block_labels:
             address = self.label_address[tmp_label.get_label()]
@@ -587,40 +771,40 @@ class SCFIAsm(AsmSrc):
 
         logger.debug('ideal place \t%x' % ideal_place)
         if not last_label:
-            self.insert_island(island, search_begin, ideal_place +
-                               (1 << self.slot_bit_width))
+            self.insert_trampo(trampo, search_begin, ideal_place +
+                               (1 << width), width)
         # or address < self.max_slot_address:
-        elif hasattr(last_label.next, 'on_island'):
+        elif hasattr(last_label.next, 'on_trampo'):
             address = self.label_address[last_label.get_label()]
-            self.insert_island(island, search_begin, ideal_place +
-                               (1 << self.slot_bit_width))
+            self.insert_trampo(trampo, search_begin, ideal_place +
+                               (1 << width), width)
         else:
             address = self.label_address[last_label.get_label()]
             self.max_slot_address = max(self.max_slot_address, address)
             logger.debug('final place \t%x' % address)
             # record where it should be
-            setattr(island[0], 'placed_address', address)
-            self.insert_lines_after(island, last_label)
+            setattr(trampo[0], 'placed_address', address)
+            self.insert_lines_after(trampo, last_label)
 
     # not tested yet
-    def fix_island_address(self, island):
-        begin_label = island[0].get_label()
+    def fix_trampo_address(self, trampo):
+        begin_label = trampo[0].get_label()
         address = self.label_address[begin_label]
-        right_address = island[0].placed_address
-        # > (1 << (self.slot_bit_width-1)):  # need fix
+        right_address = trampo[0].placed_address
+        # > (1 << (self.default_fixed_slot_bit_width-1)):  # need fix
         if address-right_address:
             logger.debug('Fixing')
-            for line in island:
+            for line in trampo:
                 if hasattr(line, 'ori_label_line'):
                     continue
                 self.unlink_line(line)
             self.compile_tmp(update_label=True)
-            for line in island:
+            for line in trampo:
                 if not hasattr(line, 'ori_label_line'):
                     continue
                 self.unlink_line(line)
-            self.insert_island(island, right_address -
-                               (1 << self.slot_bit_width), address)
+            self.insert_trampo(trampo, right_address -
+                               (1 << self.default_fixed_slot_bit_width), address)
 
     def update_tmp_label_addresses(self):
         cmd = ['readelf', '-Ws', self.tmp_obj_path]
@@ -737,7 +921,7 @@ class SCFIAsm(AsmSrc):
                     if len(line.align_to_tags) > 1:
                         raise Exception('Not implemented')
                     padding_line = self.toolkit.padding_to_label(
-                        self.slot_bit_width, 'fsttag%s' % line.align_to_tags[0])
+                        self.default_fixed_slot_bit_width, 'fsttag%s' % line.align_to_tags[0])
                 elif slot_alloc == DETERMIN:
                     padding_line = self.toolkit.padding_to_slot(
                         line.slot_width, slot=line.slots[0])
@@ -747,20 +931,20 @@ class SCFIAsm(AsmSrc):
         elif move_method == INSERT:
             if need_move:
                 self.mark_all_basic_blocks()
-            line_to_island = dict()
+            line_to_trampo = dict()
             for line in need_move:
                 if slot_alloc == FSTMET:
                     if len(line.align_to_tags) > 1:
                         raise Exception('Not implemented')
                     padding_line = self.toolkit.padding_to_label(
-                        self.slot_bit_width, 'fsttag%s' % line.align_to_tags[0])
+                        self.default_fixed_slot_bit_width, 'fsttag%s' % line.align_to_tags[0])
                 elif slot_alloc == DETERMIN:
                     print(line+'use')
                     padding_line = self.toolkit.padding_to_slot(
                         line.slot_width, slot=line.slots[0])
-                island = self.build_target_island(
+                trampo = self.build_target_trampo(
                     line, padding_line=padding_line)
-                line_to_island[line] = island
+                line_to_trampo[line] = trampo
             move_lst = [x for x in need_move]
             while move_lst:
                 logger.debug('Moving: %d/%d' %
@@ -777,8 +961,8 @@ class SCFIAsm(AsmSrc):
                 move_lst.sort(key=lambda x: line_ideal_place[x])
                 search_begin = self.label_address['.scfi_real_' +
                                                   move_lst[0].get_label()]
-                self.insert_island(
-                    line_to_island[move_lst[0]], search_begin, line_ideal_place[move_lst[0]])
+                self.insert_trampo(
+                    line_to_trampo[move_lst[0]], search_begin, line_ideal_place[move_lst[0]])
                 logger.debug('insert:%s' % move_lst[0])
                 move_lst.pop(0)
         else:
@@ -792,14 +976,14 @@ class SCFIAsm(AsmSrc):
                 pass
             elif move_method == INSERT:
                 for line in need_move:
-                    self.fix_island_address(line_to_island[line])
+                    self.fix_trampo_address(line_to_trampo[line])
 
         # compile and get the slots
         self.compile_tmp()
         if slot_alloc == FSTMET:
             for tag in self.inside_valid_tags:
                 self.tag_slot[tag] = self.read_label_address(
-                    'fsttag%s' % str(tag)) & ((1 << self.slot_bit_width)-1)
+                    'fsttag%s' % str(tag)) & ((1 << self.default_fixed_slot_bit_width)-1)
 
         # update all slots
         for line in need_reprocessing_branches:
@@ -816,8 +1000,6 @@ class SCFIAsm(AsmSrc):
         logger.info(
             'Only_move_targets_nature, move method: mix, threshold: %d bit(s)' % trampline_threshold)
         self.cut_one_side_tags()
-
-        # attributes set:
 
         need_move = []
 
@@ -843,19 +1025,15 @@ class SCFIAsm(AsmSrc):
             setattr(line, 'slot_width', slot_width)
 
         logger.debug('All instructions marked.')
-        # in first met, until now all instructions are marked by:
-        # branch: reserved_tags
-        # target: reserved_tags, align_to
-        # in predetermined, we do not need the marks
 
         logger.debug('Moving...')
         if need_move:
             self.mark_all_basic_blocks()
-        line_to_island = dict()
+        line_to_trampo = dict()
 
         need_insert = []
         for line in need_move:
-            if line.slot_width <= trampline_threshold:  # PADDING:
+            if line.slot_width <= trampline_threshold:  
                 padding_line = self.toolkit.padding_to_slot(
                     line.slot_width, slot=line.slots[0])
                 self.insert_before(padding_line, line)
@@ -865,9 +1043,9 @@ class SCFIAsm(AsmSrc):
                 need_insert.append(line)
                 padding_line = self.toolkit.padding_to_slot(
                     line.slot_width, slot=line.slots[0])
-                island = self.build_target_island(
+                trampo = self.build_target_trampo(
                     line, padding_line=padding_line)
-                line_to_island[line] = island
+                line_to_trampo[line] = trampo
 
         total_target_num = len(need_move)
         padding_target_num = len(need_move)-len(need_insert)
@@ -881,12 +1059,12 @@ class SCFIAsm(AsmSrc):
             line_ideal_place = dict()
             for x in need_insert:
                 line_ideal_place[x] = self.insert_ideal_place(
-                    x.get_label(), slot=line.slots[0])
+                    x.get_label(),width=x.slot_width ,slot=x.slots[0])
             need_insert.sort(key=lambda x: line_ideal_place[x])
             search_begin = self.label_address['.scfi_real_' +
                                               need_insert[0].get_label()]
-            self.insert_island(
-                line_to_island[need_insert[0]], search_begin, line_ideal_place[need_insert[0]])
+            self.insert_trampo(
+                line_to_trampo[need_insert[0]], search_begin, line_ideal_place[need_insert[0]],need_insert[0].slot_width)
             logger.debug('insert:%s' % need_insert[0])
             need_insert.pop(0)
 
@@ -895,3 +1073,116 @@ class SCFIAsm(AsmSrc):
 
     def branch_instrument(self):
         pass
+    
+    def remove_single_edge(self):
+
+        remove_tags = [tag for tag in self.both_valid_tag if self.tag_target_count(tag)==1]
+        print(len(remove_tags),'/',len(self.both_valid_tag))
+
+
+
+    def coloring(self):
+        self.tag_color=dict()
+        for tag in self.both_valid_tag: self.tag_color[tag]=0
+        current_max_color = 0
+
+        sorted_lst=sorted([tag for tag in self.both_valid_tag],key=lambda x : self.tag_target_count(tag), reverse=True)
+
+        while True:
+            this_round_changed=False
+            for tag in sorted_lst:
+                for target in self.tag_target[tag]:
+                    if len(target.tags)>1:
+                        sorted_tags=sorted([tag for tag in target.tags],key=lambda x: self.tag_target_count(tag))
+                        color_set = set()
+                        for t in sorted_tags:
+                            if self.tag_color[t] not in color_set:
+                                color_set.add(self.tag_color[t])
+                            else:
+                                self.tag_color[t]=current_max_color+1
+                                this_round_changed=True
+            current_max_color+=1
+            if not this_round_changed: break
+        import collections
+        logger.info('Coloring (by tag):' + str(collections.Counter([self.tag_color[v] for v in self.both_valid_tag])))
+
+        lst=[]
+        for t in self.marked_target_lst:
+            for tag in t.tags:
+                lst.append(self.tag_color[tag])
+        logger.info('Coloring (by target):' +str(collections.Counter(lst)))
+
+    def colored_IDs(self):
+        current_ID_of_color=dict()
+        self.max_color=0
+        self.tag_id=dict()
+        for tag in self.both_valid_tag:
+            color = self.tag_color[tag]
+            if color:
+                self.max_color=max(self.max_color, color)
+                if color in current_ID_of_color: 
+                    self.tag_id[tag]=current_ID_of_color[color]
+                    current_ID_of_color[color]=current_ID_of_color[color]+1
+                else:
+                    self.tag_id[tag]=0
+                    current_ID_of_color[color]=1
+        
+
+    def huffman_after_coloring(self, max_length=6):
+        from huffmanx import codebook
+        self.colored_IDs()
+
+        def get_input():
+            _input=[]
+            colored_weight=0
+            colored_tag=set()
+            for tag in self.both_valid_tag:
+                if self.tag_color[tag]==0:
+                    _input.append((tag, self.tag_target_count(tag)))
+                else:
+                    colored_weight+=self.tag_target_count(tag)
+                    colored_tag.add(tag)
+            _input.append(('SCFI_COLORED', colored_weight))
+            return _input
+        
+        code = codebook(get_input(),weight_fun=lambda x,y : 2*(x+y))
+        logger.info("Huffman encoded after coloring (prepare): max length %d"%max([len(x) for x in code.values()]))
+        
+        # if encoding too long
+        if max([len(x) for x in code.values()])> max_length:
+            current_color_ID=dict()
+            current_ID=0
+            sorted_lst=sorted([t for t in self.both_valid_tag],key=lambda x : self.tag_target_count(x), reverse=True)
+            while True:
+                for _ in range(len(sorted_lst)//4):
+                    tag=sorted_lst.pop()
+                    self.tag_color[tag]=self.max_color+1
+                    self.tag_id[tag]=current_ID
+                    current_ID+=1
+                    if current_ID==256: current_ID=0; self.max_color+=1
+                code = codebook(get_input(),weight_fun=lambda x,y : 2*(x+y))
+                logger.info("Huffman encoded after coloring (try): max length %d"%max([len(x) for x in code.values()]))
+                if max([len(x) for x in code.values()])<=max_length: break
+        
+        for tag in self.both_valid_tag: 
+            if self.tag_color[tag]: code[tag]=code['SCFI_COLORED']
+
+        for target in self.marked_target_lst:
+            for tag in target.tags:
+                if tag in self.both_valid_tag:
+                    if not hasattr(tag,'slots_info'):
+                        setattr(target,'slots_info',SLOTS_INFO([SLOT_INFO.new_slot(int(code[tag][::-1], 2),len(code[tag]))]))
+                    else:
+                        target.slots_info.slots.append(SLOT_INFO.new_slot(int(code[tag][::-1], 2),len(code[tag])))
+                    if self.tag_color[tag]:
+                        target.slots_info.slots.append(SLOT_INFO.new_ID(self.tag_id[tag],self.tag_color[tag]-1))
+        import collections
+        logger.info('Coloring (by tag):' + str(collections.Counter([self.tag_color[v] for v in self.both_valid_tag])))
+
+        lst=[]
+        for t in self.marked_target_lst:
+            for tag in t.tags:
+                lst.append(self.tag_color[tag])
+        logger.info('Coloring (by target):' +str(collections.Counter(lst)))
+
+

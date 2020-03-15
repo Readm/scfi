@@ -1,8 +1,7 @@
 .vscode
 __pycache__/
-cache/
-workload/
-workload
+workload/*
+!workload/.gitkeep
 log/
 workload.tar.gz
 spec_cmd_cache/*
