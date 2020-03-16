@@ -218,6 +218,12 @@ class CFG():
                 pattern = re.compile(r"class\.[^:]+::[^\.]+")
                 new_type = re.match(pattern, _type).group()
                 s=s.replace(_type, new_type)
+            pattern = re.compile(r"struct\.[^:]+::[^\.]+\.[\.\d]+")
+            lst=re.findall(pattern,s)
+            for _type in lst:
+                pattern = re.compile(r"struct\.[^:]+::[^\.]+")
+                new_type = re.match(pattern, _type).group()
+                s=s.replace(_type, new_type)
             return s
 
         with open(path) as f:
@@ -356,7 +362,35 @@ class SLOT_INFO():
     def new_ID(cls, value, width):
         return cls(value, width, True)
 
-
+    def build_prefix_line_and_branch(self, branch_line):
+        lines = []
+        if self.is_traditional:
+            if global_env.isa == X86:
+                if global_env.syntax == ATT:
+                    call_expr = tk.get_call_expr(branch_line)
+                    lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
+                    lines.append(Line('\tsub\t$%s, %%r11' % str(self.width+1)))
+                    lines.append(Line('\tcmpb\t*%%r11, $%s' % hex(self.value)))
+                    lines.append(Line('\tadd\t$%s, %%r11' % str(self.width+1)))
+                    lines.append(Line('\tjne\t__scfi_ID_fail'))
+                    lines.append(Line('\tcallq \t*%r11'))
+                    return lines
+            raise Exception('Unsupported syntax or ISA')
+        else:
+            if global_env.isa == X86:
+                if global_env.syntax == ATT:
+                    call_expr = tk.get_call_expr(branch_line)
+                    slot_mask = 0xffffffffffffffff ^ ((1 << self.width)-1)
+                    slot_clear_line = Line(
+                        '\tand\t$%s, %%r11' % hex(slot_mask))
+                    slot_write_line = Line(
+                        '\tor\t$%s, %%r11' % hex(self.value))
+                    lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
+                    lines.append(slot_clear_line)
+                    lines.append(slot_write_line)
+                    lines.append(Line('\tcallq \t*%r11'))
+                    return lines
+            raise Exception('Unsupported syntax or ISA')
 
 class SLOTS_INFO():
     def __init__(self, slots):
@@ -414,78 +448,6 @@ class SLOTS_INFO():
                 ]
             
         raise Exception('Multi Real Slot!')
-        # # multi-tag
-        # def hit(i, length): 
-        #     for j in range(i,i+length): 
-        #         if j in self.hit_set: return True
-        #     return False
-        # def mark(i,length):
-        #     for j in range(i,i+length): self.hit_set.add(j)
-        #     self.min_value=min(self.min_value, i)
-        #     self.max_value=max(self.max_value, i+length)
-
-        # # build slot map
-        # while real_slot:
-        #     s=real_slot.pop()
-        #     # find in side
-        #     found=False
-        #     for try_begin in range(self.min_value, self.max_value):
-        #         if hit(try_begin, tk.landing_pad_len): continue
-        #         mask=(1<<s.width)-1
-        #         if try_begin & mask == s.value:
-        #             mark(try_begin, tk.landing_pad_len)
-        #             found=True
-        #     if found: continue
-
-        #     # find out side
-        #     while True:
-        #         # find backard
-        #         try_begin=(self.min_value>>s.width<<s.width)+s.value
-        #         if try_begin>self.min_value: try_begin-=1<<s.width
-        #         if not hit(try_begin, tk.landing_pad_len): mark(try_begin, tk.landing_pad_len); break
-        #         # find foreward
-        #         try_begin=(self.max_value>>s.width<<s.width)+s.value
-        #         if try_begin<self.max_value: try_begin+=1<<s.width
-        #         if not hit(try_begin, tk.landing_pad_len): mark(try_begin, tk.landing_pad_len); break
-
-        # # end build slot map, adjust all to positive number, adjust width
-        # def has_negative(s):
-        #     for i in s: 
-        #         if i <0: return True
-        #     return False
-        # def min_width(s):
-        #     lst=list(s)
-        #     w = 1
-        #     for i in lst:
-        #         while (1<<w) <= i: w+=1
-        #     return w
-
-        # while has_negative(self.hit_set):
-        #     width = min_width(self.hit_set)
-        #     self.hit_set={i+(1<<width) for i in self.hit_set}
-        # print(self.hit_set)
-        # final_width=min_width(self.hit_set)
-        # min_v = min(self.hit_set)
-        # max_v = max(self.hit_set)
-        # #if max_v + tra_prefix_width+6
-
-        # # building
-        # lines=[Line('\t# multi slot')]
-        # pointer=min_v
-        # while pointer<=max_v:
-        #     if pointer not in self.hit_set: pointer+=1; continue
-
-        #     lines.append(PaddingLine.pad_to_slot(pointer,final_width))
-        #     lines.append(tk.get_landing_pad_line())
-        #     if not hit(pointer+tk.landing_pad_len,6): # we assume the jump is at most 6 bytes
-        #         lines.append(tk.jump_label(label_line.get_label()))
-        #     pointer+=tk.landing_pad_len
-        # if tra_prefix_width:
-        #     lines.append(IDLine.get_ID_line(tra_prefix, tra_prefix_width))
-        #     lines.append(label_line)
-        #     lines.append(tk.get_landing_pad_line())
-        
-        # return lines
 
 
 class SCFIAsm(AsmSrc):
@@ -526,6 +488,7 @@ class SCFIAsm(AsmSrc):
         self.max_slot_address = 0
 
     def mark_all_instructions(self, cfg=None):
+        '''Add "tags" for all targets and branches'''
         for line in self.traverse_lines():
             if self.toolkit.is_indirect_branch(line):
                 self.branch_lst.append(line)
@@ -626,6 +589,7 @@ class SCFIAsm(AsmSrc):
                          ' -> \t'+hex(self.tag_slot[tag][0]))
 
     def huffman_slot_allocation(self, source='target'):
+        '''use huffman coding encode all labels'''
         from huffmanx import codebook
         if source == 'target':
             code = codebook([(tag, self.tag_target_count(tag))
@@ -829,6 +793,7 @@ class SCFIAsm(AsmSrc):
     def read_label_address(self, label):
         return self.label_address[label]
 
+    # abandoned
     def only_move_targets(self, move_method=PADDING, slot_alloc=FSTMET, optimize_round=0):
         '''only reorder target, not branches
         use insert or padding
@@ -1071,17 +1036,29 @@ class SCFIAsm(AsmSrc):
         # compile and get the slots
         self.compile_tmp()
 
-    def branch_instrument(self):
-        pass
-    
+    # todo, it is not very common
     def remove_single_edge(self):
-
+        return
         remove_tags = [tag for tag in self.both_valid_tag if self.tag_target_count(tag)==1]
         print(len(remove_tags),'/',len(self.both_valid_tag))
 
+    def add_ID_fail(self):
+        lines=[
+            Line('__scfi_ID_fail:'),
+            Line('\tud2')
+        ]
+        for line in self.traverse_lines():
+            if line.get_directive_type() in ('.text','.file'): continue
+            self.insert_lines_before(lines,line)
+            return
 
+    @property
+    def max_color(self):
+        if not self.tag_color.values(): return 0
+        return max(self.tag_color.values()) # requires coloring first
 
     def coloring(self):
+        '''Coloring: 0 stands for slot, 1,2,3 for IDs'''
         self.tag_color=dict()
         for tag in self.both_valid_tag: self.tag_color[tag]=0
         current_max_color = 0
@@ -1113,13 +1090,12 @@ class SCFIAsm(AsmSrc):
         logger.info('Coloring (by target):' +str(collections.Counter(lst)))
 
     def colored_IDs(self):
+        '''After coloring, assign each tag a ID'''
         current_ID_of_color=dict()
-        self.max_color=0
         self.tag_id=dict()
         for tag in self.both_valid_tag:
             color = self.tag_color[tag]
             if color:
-                self.max_color=max(self.max_color, color)
                 if color in current_ID_of_color: 
                     self.tag_id[tag]=current_ID_of_color[color]
                     current_ID_of_color[color]=current_ID_of_color[color]+1
@@ -1128,10 +1104,14 @@ class SCFIAsm(AsmSrc):
                     current_ID_of_color[color]=1
         
 
-    def huffman_after_coloring(self, max_length=6):
+    def huffman_after_coloring(self, orthogonal=True, max_length=6):
+        '''After Coloring, use huffman coding encode the color 0 (slots)
+        If the max_length of coding > max_length, make a new color for them.
+        After this, each marked branch has a "slot_info",each marked target has a "slots_info"'''
         from huffmanx import codebook
-        self.colored_IDs()
+        if len(self.both_valid_tag) <=1: return
 
+        # get all colored in the huffman
         def get_input():
             _input=[]
             colored_weight=0
@@ -1142,7 +1122,7 @@ class SCFIAsm(AsmSrc):
                 else:
                     colored_weight+=self.tag_target_count(tag)
                     colored_tag.add(tag)
-            _input.append(('SCFI_COLORED', colored_weight))
+            if orthogonal and colored_weight: _input.append(('SCFI_COLORED', colored_weight))
             return _input
         
         code = codebook(get_input(),weight_fun=lambda x,y : 2*(x+y))
@@ -1152,30 +1132,48 @@ class SCFIAsm(AsmSrc):
         if max([len(x) for x in code.values()])> max_length:
             current_color_ID=dict()
             current_ID=0
+            first_color=self.max_color+1
             sorted_lst=sorted([t for t in self.both_valid_tag],key=lambda x : self.tag_target_count(x), reverse=True)
             while True:
                 for _ in range(len(sorted_lst)//4):
                     tag=sorted_lst.pop()
-                    self.tag_color[tag]=self.max_color+1
+                    self.tag_color[tag]=first_color+(current_ID//256)
                     self.tag_id[tag]=current_ID
                     current_ID+=1
-                    if current_ID==256: current_ID=0; self.max_color+=1
                 code = codebook(get_input(),weight_fun=lambda x,y : 2*(x+y))
                 logger.info("Huffman encoded after coloring (try): max length %d"%max([len(x) for x in code.values()]))
                 if max([len(x) for x in code.values()])<=max_length: break
         
+        
+        color_slot = None # slot info for colored
+        max_color = self.max_color
+        if orthogonal and 'SCFI_COLORED' in code.keys(): color_slot=SLOT_INFO.new_slot(int(code['SCFI_COLORED'],2),len(code['SCFI_COLORED']))
         for tag in self.both_valid_tag: 
-            if self.tag_color[tag]: code[tag]=code['SCFI_COLORED']
+            if self.tag_color[tag]:
+                self.tag_slot[tag]=SLOT_INFO.new_ID(self.tag_id[tag],self.tag_color[tag])
+            else:
+                self.tag_slot[tag]=SLOT_INFO.new_slot(int(code[tag],2),len(code[tag]))
+        
+        for branch in self.marked_branch_lst:
+            if len(branch.tags)>1: raise Exception("not supported")
+            setattr(branch, 'slot_info', self.tag_slot[branch.tags[0]])
 
         for target in self.marked_target_lst:
+            setattr(target,'slots_info', set([]))
+            color_set=set([])
             for tag in target.tags:
-                if tag in self.both_valid_tag:
-                    if not hasattr(tag,'slots_info'):
-                        setattr(target,'slots_info',SLOTS_INFO([SLOT_INFO.new_slot(int(code[tag][::-1], 2),len(code[tag]))]))
+                target.slots_info.add(self.tag_slot[tag])
+                color_set.add(self.tag_color[tag])
+            if orthogonal:
+                for i in range(max_color+1):
+                    if i in color_set: continue # has this identifier
+                    if i == 0 : # has no slot
+                        target.slots_info.add(color_slot)
                     else:
-                        target.slots_info.slots.append(SLOT_INFO.new_slot(int(code[tag][::-1], 2),len(code[tag])))
-                    if self.tag_color[tag]:
-                        target.slots_info.slots.append(SLOT_INFO.new_ID(self.tag_id[tag],self.tag_color[tag]-1))
+                        target.slots_info.add(SLOT_INFO.new_ID(0xFF,i))
+            target.slots_info=SLOTS_INFO(target.slots_info)
+
+        # count information
         import collections
         logger.info('Coloring (by tag):' + str(collections.Counter([self.tag_color[v] for v in self.both_valid_tag])))
 
@@ -1186,3 +1184,34 @@ class SCFIAsm(AsmSrc):
         logger.info('Coloring (by target):' +str(collections.Counter(lst)))
 
 
+    def branch_instrument(self):
+        for line in self.marked_branch_lst:
+            next_line =line.next
+            self.unlink_line(line)
+            self.insert_lines_before(line.slot_info.build_prefix_line_and_branch(line),next_line)
+
+    def target_instrument(self):
+        for line in self.marked_target_lst:
+            next_line=line.next
+            self.unlink_line(line)
+            self.insert_lines_before(line.slots_info.build_prefix_line_and_label(line),next_line)
+
+    def code_instrument(self):
+        if len(self.both_valid_tag) <=1: return
+        self.branch_instrument()
+        self.target_instrument()
+
+    def scfi_all(self, orthogonal=True, max_slot_length=8):
+        '''Paper version: branch with only one identifier, branch may has multiple.
+        Only padding, not trampoline.'''
+
+        # prepare, after read cfg
+        
+        self.cut_one_side_tags()
+        self.remove_single_edge()
+        self.coloring()
+        self.colored_IDs()
+        self.huffman_after_coloring(orthogonal=orthogonal,max_length=max_slot_length)
+        self.code_instrument()
+        if self.max_color: self.add_ID_fail()
+        self.compile_tmp()

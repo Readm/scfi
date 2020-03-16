@@ -100,6 +100,7 @@ class Line(str):
     @property
     def is_directive(self): return self.type == 'directive'
 
+    # with dot
     def get_directive_type(self): return self.strip_comment().strip().split()[
         0] if self.is_directive else None
 

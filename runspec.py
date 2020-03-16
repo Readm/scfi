@@ -264,7 +264,7 @@ class PYSPEC():
             for filename in filelst:
                 logger.info('Running %s with file %s...' %
                             (benchmark, filename))
-                os.chdir(os.path.join(self.work_path,benchmark,'/work'))
+                os.chdir(os.path.join(self.work_path,benchmark,'work'))
                 total_takes = 0
                 try:
                     run_cmd = cmds.run_cmd
@@ -297,3 +297,15 @@ class PYSPEC():
         for benchmark in do_lst:
             os.chdir(os.path.join(self.work_path,benchmark,'work'))
             os.system(cmd)
+
+    def clear_err_file(self, do_lst=None):
+        self.do("rm -f ./*.err",do_lst)
+    
+    def list_err_file(self, do_lst=None):
+        if do_lst==None: do_lst= self.work_lst
+        for benchmark in do_lst:
+            print('---------------------- errs of ', benchmark)
+            os.chdir(os.path.join(self.work_path,benchmark,'work'))
+            os.system('cat *.err')
+
+
