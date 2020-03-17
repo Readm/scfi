@@ -149,7 +149,9 @@ class ToolKit():
         '''Arrange slots and traditonal IDs before a multi-tag target'''
         pass
 
+
 tk = ToolKit()
+
 
 class PaddingLine(Line):
     def __init__(self, s, bit_width=8):
@@ -165,18 +167,20 @@ class PaddingLine(Line):
         return cls('\t.org ((.-0x%x-1)/(1<<%d)+1)*(1<<%d)+0x%x, 0x90 \t# pad to 0x%x, in width %d' %
                    (slot, bit_width, bit_width, slot, slot, bit_width))
 
+
 class IDLine(Line):
     def __init__(self, s):
         super().__init__(s)
 
     @classmethod
     def get_ID_line(cls, value, offset):
-        s=''
-        v=value
+        s = ''
+        v = value
         for i in range(offset):
-            s=hex(v&0xff)+', '+s
-            v=v>>8
+            s = hex(v & 0xff)+', '+s
+            v = v >> 8
         return cls('\t.byte\t'+s[:-2])
+
 
 class CFG():
     '''Label based CFG, each target/branch has tags(labels)
@@ -213,117 +217,132 @@ class CFG():
         def class_strip(s):
             import re
             pattern = re.compile(r"class\.[^:]+::[^\.]+\.[\.\d]+")
-            lst=re.findall(pattern,s)
+            lst = re.findall(pattern, s)
             for _type in lst:
                 pattern = re.compile(r"class\.[^:]+::[^\.]+")
                 new_type = re.match(pattern, _type).group()
-                s=s.replace(_type, new_type)
+                s = s.replace(_type, new_type)
             pattern = re.compile(r"struct\.[^:]+::[^\.]+\.[\.\d]+")
-            lst=re.findall(pattern,s)
+            lst = re.findall(pattern, s)
             for _type in lst:
                 pattern = re.compile(r"struct\.[^:]+::[^\.]+")
                 new_type = re.match(pattern, _type).group()
-                s=s.replace(_type, new_type)
+                s = s.replace(_type, new_type)
             return s
 
         with open(path) as f:
             target, branch = dict(), dict()
             # first read the cfg in type
-            virtual_branch=dict()
-            virtual_target=dict()
-            pointer_branch=dict()
-            pointer_target=dict()
+            virtual_branch = dict()
+            virtual_target = dict()
+            pointer_branch = dict()
+            pointer_target = dict()
 
             _type = ""
             items = set()
-            current_set = None #empty
+            current_set = None  # empty
             for line in f:
-                if line.startswith('Virtual Function Branches:'): current_set=virtual_branch; continue
-                if line.startswith('Virtual Function Targets:'): current_set=virtual_target; continue
-                if line.startswith('Function Pointer Branches:'): current_set=pointer_branch; continue
-                if line.startswith('Function Pointer Targets:'): current_set=pointer_target; continue
-                if line.startswith('Function Pointer CFG:'): current_set=None; continue
+                if line.startswith('Virtual Function Branches:'):
+                    current_set = virtual_branch
+                    continue
+                if line.startswith('Virtual Function Targets:'):
+                    current_set = virtual_target
+                    continue
+                if line.startswith('Function Pointer Branches:'):
+                    current_set = pointer_branch
+                    continue
+                if line.startswith('Function Pointer Targets:'):
+                    current_set = pointer_target
+                    continue
+                if line.startswith('Function Pointer CFG:'):
+                    current_set = None
+                    continue
 
-                if current_set==None: continue
-                if line.startswith('Type:'):  
-                    _type=class_strip(line.strip()[6:]); 
-                    #print(_type)
+                if current_set == None:
+                    continue
+                if line.startswith('Type:'):
+                    _type = class_strip(line.strip()[6:])
+                    # print(_type)
                     continue
                 try:
                     current_set[_type].add(line.strip())
                 except KeyError:
-                    current_set[_type]=set([line.strip()])
-            
+                    current_set[_type] = set([line.strip()])
+
             # remove items in pointer_* if in virtual_*
-            rm_lst=[]
+            rm_lst = []
             for key in pointer_branch.keys():
                 if key in virtual_branch.keys():
                     rm_lst.append(key)
             for key in rm_lst:
                 del pointer_branch[key]
-            rm_lst=[]
+            rm_lst = []
             for key in pointer_target.keys():
                 if key in virtual_target.keys():
                     rm_lst.append(key)
             for key in rm_lst:
                 del pointer_target[key]
-            
+
             tmp_branch = dict()
             for key in virtual_branch.keys():
                 for item in virtual_branch[key]:
                     try:
                         tmp_branch[item].add(key)
                     except KeyError:
-                        tmp_branch[item]=set([key])
+                        tmp_branch[item] = set([key])
             for key in pointer_branch.keys():
                 for item in pointer_branch[key]:
                     try:
                         tmp_branch[item].add(key)
                     except KeyError:
-                        tmp_branch[item]=set([key])
+                        tmp_branch[item] = set([key])
 
-            
             # merge multi type of branchs
-            merge_type=dict() # from type to a merge number
+            merge_type = dict()  # from type to a merge number
             merge_type_count = 0
             for item in tmp_branch.keys():
-                if len(tmp_branch[item])==1: continue
-                new_type_lst=[]
+                if len(tmp_branch[item]) == 1:
+                    continue
+                new_type_lst = []
                 for _type in tmp_branch[item]:
                     # map to new type recursely
-                    new_type=_type
-                    while new_type in merge_type.keys():  new_type=merge_type[new_type]
+                    new_type = _type
+                    while new_type in merge_type.keys():
+                        new_type = merge_type[new_type]
                     new_type_lst.append(new_type)
-                new_merge_type = 'Merged_type_%d' %merge_type_count
-                merge_type_count+=1
-                for new_type in new_type_lst: 
-                    merge_type[new_type]=new_merge_type
-                tmp_branch[item]=set([new_merge_type])
-            
+                new_merge_type = 'Merged_type_%d' % merge_type_count
+                merge_type_count += 1
+                for new_type in new_type_lst:
+                    merge_type[new_type] = new_merge_type
+                tmp_branch[item] = set([new_merge_type])
 
             target, branch = dict(), dict()
             for br_set in [virtual_branch, pointer_branch]:
                 for key in br_set.keys():
                     new_type = key
-                    while new_type in merge_type.keys(): new_type=merge_type[new_type]
+                    while new_type in merge_type.keys():
+                        new_type = merge_type[new_type]
                     for item in br_set[key]:
-                        try:  
+                        try:
                             branch[item].add(new_type)
-                            if len(branch[item]) >1: 
-                                logger.warn('Multi-tag branch found: %s'%item)
-                        except KeyError: 
-                            branch[item]=set([new_type])
+                            if len(branch[item]) > 1:
+                                logger.warn(
+                                    'Multi-tag branch found: %s' % item)
+                        except KeyError:
+                            branch[item] = set([new_type])
             for tg_set in [virtual_target, pointer_target]:
                 for key in tg_set.keys():
                     new_type = key
-                    while new_type in merge_type.keys(): new_type=merge_type[new_type]
+                    while new_type in merge_type.keys():
+                        new_type = merge_type[new_type]
                     for item in tg_set[key]:
-                        try:  
+                        try:
                             target[item].add(new_type)
-                            if len(target[item]) >1: 
-                                logger.debug('Multi-tag target found: %d %s'%(len(target[item]),item))
-                        except KeyError: 
-                            target[item]=set([new_type])
+                            if len(target[item]) > 1:
+                                logger.debug(
+                                    'Multi-tag target found: %d %s' % (len(target[item]), item))
+                        except KeyError:
+                            target[item] = set([new_type])
             # pprint(branch,width=-1)
             # pprint(target,width=-1)
 
@@ -337,8 +356,9 @@ class CFG():
                 new_key += ' '+' '.join(branch_loc.split(':')[1:3])
                 self.branch[new_key] = self.branch[branch_loc]
                 self.branch.pop(branch_loc)
-            except KeyError: # some branches in CFG do not appera in assemble file
+            except KeyError:  # some branches in CFG do not appera in assemble file
                 continue
+
 
 class SLOT_INFO():
     def __init__(self, value, width, is_traditional):
@@ -351,13 +371,14 @@ class SLOT_INFO():
         self.value = value
         self.width = width
         self.is_traditional = is_traditional
-    
-    @property #alias
+
+    @property  # alias
     def offset(self): return self.width
 
     @classmethod
     def new_slot(cls, value, width):
         return cls(value, width, False)
+
     @classmethod
     def new_ID(cls, value, width):
         return cls(value, width, True)
@@ -392,10 +413,18 @@ class SLOT_INFO():
                     return lines
             raise Exception('Unsupported syntax or ISA')
 
+
 class SLOTS_INFO():
     def __init__(self, slots):
         '''Contains multiple SLOT_INFO'''
-        self.slots=slots
+        self.slots = slots
+
+    def get_max_align(self):
+        max_align = 0
+        for slot in self.slots:
+            if not slot.is_traditional:
+                max_align = max(max_align, slot.width)
+        return max_align
 
     def build_prefix_line_and_label(self, label_line):
         '''Build target prefix line and label based on the slot info. Output pattern:
@@ -404,14 +433,14 @@ class SLOTS_INFO():
         only IDs: IDs|label|landingpad
         '''
         # Build traditional ID prefix first
-        tra_slots=[s for s in self.slots if s.is_traditional]
-        tra_prefix=0
-        tra_prefix_width=0
+        tra_slots = [s for s in self.slots if s.is_traditional]
+        tra_prefix = 0
+        tra_prefix_width = 0
         for s in tra_slots:
-            tra_prefix_width=max(tra_prefix_width, s.offset+1)
-            tra_prefix ^= s.value<<(s.offset*8)
-        
-        real_slot=[s for s in self.slots if not s.is_traditional]
+            tra_prefix_width = max(tra_prefix_width, s.offset+1)
+            tra_prefix ^= s.value << (s.offset*8)
+
+        real_slot = [s for s in self.slots if not s.is_traditional]
         real_slot.sort(key=lambda x: x.width)
 
         # only IDs
@@ -423,30 +452,31 @@ class SLOTS_INFO():
             ]
 
         # get first slot
-        start=real_slot.pop()
-        self.tmp_width=start.width
-        self.min_value=start.value
-        self.max_value=start.value+tk.landing_pad_len
-        self.hit_set=set(range(self.min_value,self.max_value))
+        start = real_slot.pop()
+        self.tmp_width = start.width
+        self.min_value = start.value
+        self.max_value = start.value+tk.landing_pad_len
+        self.hit_set = set(range(self.min_value, self.max_value))
 
-        #if only one slot
+        # if only one slot
         if not real_slot:
             # no IDs
             if not tra_prefix_width:
                 return [
-                    PaddingLine.pad_to_slot(start.value,start.width),
+                    PaddingLine.pad_to_slot(start.value, start.width),
                     label_line,
                     tk.get_landing_pad_line()
                 ]
             else:
-                new_slot_value = (start.value - tra_prefix_width) % (1<< start.width)
+                new_slot_value = (
+                    start.value - tra_prefix_width) % (1 << start.width)
                 return[
-                    PaddingLine.pad_to_slot(new_slot_value,start.width),
+                    PaddingLine.pad_to_slot(new_slot_value, start.width),
                     IDLine.get_ID_line(tra_prefix, tra_prefix_width),
                     label_line,
                     tk.get_landing_pad_line()
                 ]
-            
+
         raise Exception('Multi Real Slot!')
 
 
@@ -455,8 +485,10 @@ class SCFIAsm(AsmSrc):
         super().__init__(s)
         self.cfg = cfg
         self.default_fixed_slot_bit_width = 8
-        self.max_padding_slot_width = 6
+        self.max_slot_length = 0 # for huffman-encoding
+        self.max_padding_slot_width = 6  # for padding/trampoline
         self.max_variable_slot_bit_width = 10
+        self.slot_type = 'variable_width'  # or replace_8_bit
 
         self.branch_lst = []  # in order
         self.marked_branch_lst = []  # in order
@@ -465,13 +497,12 @@ class SCFIAsm(AsmSrc):
         self.valid_branch_tags = set()    # since cfg contains more tags than our object
         self.valid_target_tags = set()
 
-        self.both_valid_tag = set() # after cutting one side tags, the tags remained
+        self.both_valid_tag = set()  # after cutting one side tags, the tags remained
 
         self.tag_slot = dict()     # tag->SLOT_INFO
-        self.slot_type = 'variable_width'  # or replace_8_bit
 
         self.tag_branch_count = dict()
-        self.tag_target = dict() # tag-> target with this tag
+        self.tag_target = dict()  # tag-> target with this tag
         self.tag_count = dict()
 
         self.label_address = dict()
@@ -480,12 +511,15 @@ class SCFIAsm(AsmSrc):
         self.tmp_asm_path = '/tmp/scfi_tmp.s'
         self.tmp_obj_path = '/tmp/scfi_tmp.o'
         self.tmp_dmp_path = '/tmp/scfi_tmp.dump'
+        self.tmp_lds_path = '/tmp/scfi_tmp.lds'
+
+        self.section_align = dict() # record the max alignment for each section
 
         self.update_debug_file_number(src_path)
 
         self.toolkit = ToolKit()
 
-        self.max_slot_address = 0
+        self.max_slot_address = 0 # for inserting trampoline
 
     def mark_all_instructions(self, cfg=None):
         '''Add "tags" for all targets and branches'''
@@ -498,7 +532,8 @@ class SCFIAsm(AsmSrc):
         self.mark_all_branches()
         self.mark_all_targets()
         logger.info('marked all instructions')
-        logger.info('default slot bit width: %d' % self.default_fixed_slot_bit_width)
+        logger.info('default slot bit width: %d' %
+                    self.default_fixed_slot_bit_width)
         logger.info('icalls: %d' % len(self.branch_lst))
         logger.info('marked_icalls: %d' % len(self.marked_branch_lst))
         logger.info('marked_targets: %d' % len(self.marked_target_lst))
@@ -537,7 +572,7 @@ class SCFIAsm(AsmSrc):
                     try:
                         self.tag_target[tag].add(line)
                     except KeyError:
-                        self.tag_target[tag]=set([line])
+                        self.tag_target[tag] = set([line])
                     try:
                         self.tag_count[tag] += 1
                     except KeyError:
@@ -566,7 +601,8 @@ class SCFIAsm(AsmSrc):
             i for i in self.marked_branch_lst if len(i.tags) > 0]
         new = len(self.marked_branch_lst)
         logger.debug('Marked branch: %d -> %d' % (old, new))
-        self.both_valid_tag = {t for t in self.valid_branch_tags if t in self.valid_target_tags}
+        self.both_valid_tag = {
+            t for t in self.valid_branch_tags if t in self.valid_target_tags}
 
     def random_slot_allocation(self):
         '''Fixed slot bit width. Use hash, this allocation requires no compile'''
@@ -998,7 +1034,7 @@ class SCFIAsm(AsmSrc):
 
         need_insert = []
         for line in need_move:
-            if line.slot_width <= trampline_threshold:  
+            if line.slot_width <= trampline_threshold:
                 padding_line = self.toolkit.padding_to_slot(
                     line.slot_width, slot=line.slots[0])
                 self.insert_before(padding_line, line)
@@ -1015,7 +1051,7 @@ class SCFIAsm(AsmSrc):
         total_target_num = len(need_move)
         padding_target_num = len(need_move)-len(need_insert)
         logger.info("Padding: %d (%02f%%), Trampoline: %d (%02f%%)" % (padding_target_num, padding_target_num /
-                                                                   total_target_num * 100, total_target_num-padding_target_num, 100-(padding_target_num/total_target_num * 100)))
+                                                                       total_target_num * 100, total_target_num-padding_target_num, 100-(padding_target_num/total_target_num * 100)))
 
         while need_insert:
             logger.debug('Moving: %d/%d' %
@@ -1024,12 +1060,12 @@ class SCFIAsm(AsmSrc):
             line_ideal_place = dict()
             for x in need_insert:
                 line_ideal_place[x] = self.insert_ideal_place(
-                    x.get_label(),width=x.slot_width ,slot=x.slots[0])
+                    x.get_label(), width=x.slot_width, slot=x.slots[0])
             need_insert.sort(key=lambda x: line_ideal_place[x])
             search_begin = self.label_address['.scfi_real_' +
                                               need_insert[0].get_label()]
             self.insert_trampo(
-                line_to_trampo[need_insert[0]], search_begin, line_ideal_place[need_insert[0]],need_insert[0].slot_width)
+                line_to_trampo[need_insert[0]], search_begin, line_ideal_place[need_insert[0]], need_insert[0].slot_width)
             logger.debug('insert:%s' % need_insert[0])
             need_insert.pop(0)
 
@@ -1039,165 +1075,242 @@ class SCFIAsm(AsmSrc):
     # todo, it is not very common
     def remove_single_edge(self):
         return
-        remove_tags = [tag for tag in self.both_valid_tag if self.tag_target_count(tag)==1]
-        print(len(remove_tags),'/',len(self.both_valid_tag))
+        remove_tags = [
+            tag for tag in self.both_valid_tag if self.tag_target_count(tag) == 1]
+        print(len(remove_tags), '/', len(self.both_valid_tag))
+
+    def new_lds(self):
+        '''Ensure the alignment in ld script'''
+        if not self.section_align:  return
+
+        unlikely_s, exit_s, startup_s, hot_s, other_s=[],[],[],[],[]
+        for section_name in self.section_align.keys():
+
+            align_width=self.section_align[section_name]
+            if  align_width<=4: continue 
+            if '.text' not in section_name:
+                logger.warn('Try to change alignment of a non-text section: %s', section_name)
+            align_value=1<<align_width
+            align_line="    . = ALIGN(%s);\n" % hex(align_value)
+            section_line="    %s\n" % section_name
+            current_set=None
+            if 'unlikely' in section_name:
+                current_set=unlikely_s
+            elif '.text.exit' in section_name:
+                current_set=exit_s
+            elif '.text.startup' in section_name:
+                current_set=startup_s
+            elif '.text.hot' in section_name:
+                current_set=hot_s
+            else:
+                current_set=other_s
+            current_set.append(align_line)
+            current_set.append(section_line)
+        with open('default.lds') as fi:
+            with open(self.tmp_lds_path,'w') as fo:
+                for line in fi:
+                    fo.write(line)
+                    if 'SCFI insert mark' in line:
+                        if '#unlikely#' in line:
+                            fo.writelines(unlikely_s)
+                        elif '#exit#' in line:
+                            fo.writelines(exit_s)
+                        elif '#startup#' in line:
+                            fo.writelines(startup_s)
+                        elif '#hot#' in line:
+                            fo.writelines(hot_s)
+                        elif '#default#' in line:
+                            fo.writelines(other_s)
+
 
     def add_ID_fail(self):
-        lines=[
+        lines = [
             Line('__scfi_ID_fail:'),
             Line('\tud2')
         ]
         for line in self.traverse_lines():
-            if line.get_directive_type() in ('.text','.file'): continue
-            self.insert_lines_before(lines,line)
+            if line.get_directive_type() in ('.text', '.file'):
+                continue
+            self.insert_lines_before(lines, line)
             return
 
     @property
     def max_color(self):
-        if not self.tag_color.values(): return 0
-        return max(self.tag_color.values()) # requires coloring first
+        if not self.tag_color.values():
+            return 0
+        return max(self.tag_color.values())  # requires coloring first
 
     def coloring(self):
         '''Coloring: 0 stands for slot, 1,2,3 for IDs'''
-        self.tag_color=dict()
-        for tag in self.both_valid_tag: self.tag_color[tag]=0
+        self.tag_color = dict()
+        for tag in self.both_valid_tag:
+            self.tag_color[tag] = 0
         current_max_color = 0
 
-        sorted_lst=sorted([tag for tag in self.both_valid_tag],key=lambda x : self.tag_target_count(tag), reverse=True)
+        sorted_lst = sorted([tag for tag in self.both_valid_tag],
+                            key=lambda x: self.tag_target_count(tag), reverse=True)
 
         while True:
-            this_round_changed=False
+            this_round_changed = False
             for tag in sorted_lst:
                 for target in self.tag_target[tag]:
-                    if len(target.tags)>1:
-                        sorted_tags=sorted([tag for tag in target.tags],key=lambda x: self.tag_target_count(tag))
+                    if len(target.tags) > 1:
+                        sorted_tags = sorted(
+                            [tag for tag in target.tags], key=lambda x: self.tag_target_count(tag))
                         color_set = set()
                         for t in sorted_tags:
                             if self.tag_color[t] not in color_set:
                                 color_set.add(self.tag_color[t])
                             else:
-                                self.tag_color[t]=current_max_color+1
-                                this_round_changed=True
-            current_max_color+=1
-            if not this_round_changed: break
+                                self.tag_color[t] = current_max_color+1
+                                this_round_changed = True
+            current_max_color += 1
+            if not this_round_changed:
+                break
         import collections
-        logger.info('Coloring (by tag):' + str(collections.Counter([self.tag_color[v] for v in self.both_valid_tag])))
+        logger.info('Coloring (by tag):' +
+                    str(collections.Counter([self.tag_color[v] for v in self.both_valid_tag])))
 
-        lst=[]
+        lst = []
         for t in self.marked_target_lst:
             for tag in t.tags:
                 lst.append(self.tag_color[tag])
-        logger.info('Coloring (by target):' +str(collections.Counter(lst)))
+        logger.info('Coloring (by target):' + str(collections.Counter(lst)))
 
     def colored_IDs(self):
         '''After coloring, assign each tag a ID'''
-        current_ID_of_color=dict()
-        self.tag_id=dict()
+        current_ID_of_color = dict()
+        self.tag_id = dict()
         for tag in self.both_valid_tag:
             color = self.tag_color[tag]
             if color:
-                if color in current_ID_of_color: 
-                    self.tag_id[tag]=current_ID_of_color[color]
-                    current_ID_of_color[color]=current_ID_of_color[color]+1
+                if color in current_ID_of_color:
+                    self.tag_id[tag] = current_ID_of_color[color]
+                    current_ID_of_color[color] = current_ID_of_color[color]+1
                 else:
-                    self.tag_id[tag]=0
-                    current_ID_of_color[color]=1
-        
+                    self.tag_id[tag] = 0
+                    current_ID_of_color[color] = 1
 
     def huffman_after_coloring(self, orthogonal=True, max_length=6):
         '''After Coloring, use huffman coding encode the color 0 (slots)
         If the max_length of coding > max_length, make a new color for them.
         After this, each marked branch has a "slot_info",each marked target has a "slots_info"'''
         from huffmanx import codebook
-        if len(self.both_valid_tag) <=1: return
+        if len(self.both_valid_tag) <= 1:
+            return
 
         # get all colored in the huffman
         def get_input():
-            _input=[]
-            colored_weight=0
-            colored_tag=set()
+            _input = []
+            colored_weight = 0
+            colored_tag = set()
             for tag in self.both_valid_tag:
-                if self.tag_color[tag]==0:
+                if self.tag_color[tag] == 0:
                     _input.append((tag, self.tag_target_count(tag)))
                 else:
-                    colored_weight+=self.tag_target_count(tag)
+                    colored_weight += self.tag_target_count(tag)
                     colored_tag.add(tag)
-            if orthogonal and colored_weight: _input.append(('SCFI_COLORED', colored_weight))
+            if orthogonal and colored_weight:
+                _input.append(('SCFI_COLORED', colored_weight))
             return _input
-        
-        code = codebook(get_input(),weight_fun=lambda x,y : 2*(x+y))
-        logger.info("Huffman encoded after coloring (prepare): max length %d"%max([len(x) for x in code.values()]))
-        
+
+        code = codebook(get_input(), weight_fun=lambda x, y: 2*(x+y))
+        logger.info("Huffman encoded after coloring (prepare): max length %d" % max(
+            [len(x) for x in code.values()]))
+
         # if encoding too long
-        if max([len(x) for x in code.values()])> max_length:
-            current_color_ID=dict()
-            current_ID=0
-            first_color=self.max_color+1
-            sorted_lst=sorted([t for t in self.both_valid_tag],key=lambda x : self.tag_target_count(x), reverse=True)
+        if max([len(x) for x in code.values()]) > max_length:
+            current_color_ID = dict()
+            current_ID = 0
+            first_color = self.max_color+1
+            sorted_lst = sorted([t for t in self.both_valid_tag],
+                                key=lambda x: self.tag_target_count(x), reverse=True)
             while True:
                 for _ in range(len(sorted_lst)//4):
-                    tag=sorted_lst.pop()
-                    self.tag_color[tag]=first_color+(current_ID//256)
-                    self.tag_id[tag]=current_ID
-                    current_ID+=1
-                code = codebook(get_input(),weight_fun=lambda x,y : 2*(x+y))
-                logger.info("Huffman encoded after coloring (try): max length %d"%max([len(x) for x in code.values()]))
-                if max([len(x) for x in code.values()])<=max_length: break
+                    tag = sorted_lst.pop()
+                    self.tag_color[tag] = first_color+(current_ID//256)
+                    self.tag_id[tag] = current_ID
+                    current_ID += 1
+                code = codebook(get_input(), weight_fun=lambda x, y: 2*(x+y))
+                logger.info("Huffman encoded after coloring (try): max length %d" % max(
+                    [len(x) for x in code.values()]))
+                if max([len(x) for x in code.values()]) <= max_length:
+                    break
         
-        
-        color_slot = None # slot info for colored
+        # record a global max length
+        self.max_slot_length = max([len(x) for x in code.values()])
+
+        color_slot = None  # slot info for colored
         max_color = self.max_color
-        if orthogonal and 'SCFI_COLORED' in code.keys(): color_slot=SLOT_INFO.new_slot(int(code['SCFI_COLORED'],2),len(code['SCFI_COLORED']))
-        for tag in self.both_valid_tag: 
+        if orthogonal and 'SCFI_COLORED' in code.keys():
+            color_slot = SLOT_INFO.new_slot(
+                int(code['SCFI_COLORED'], 2), len(code['SCFI_COLORED']))
+        for tag in self.both_valid_tag:
             if self.tag_color[tag]:
-                self.tag_slot[tag]=SLOT_INFO.new_ID(self.tag_id[tag],self.tag_color[tag])
+                self.tag_slot[tag] = SLOT_INFO.new_ID(
+                    self.tag_id[tag], self.tag_color[tag])
             else:
-                self.tag_slot[tag]=SLOT_INFO.new_slot(int(code[tag],2),len(code[tag]))
-        
+                self.tag_slot[tag] = SLOT_INFO.new_slot(
+                    int(code[tag], 2), len(code[tag]))
+
         for branch in self.marked_branch_lst:
-            if len(branch.tags)>1: raise Exception("not supported")
+            if len(branch.tags) > 1:
+                raise Exception("not supported")
             setattr(branch, 'slot_info', self.tag_slot[branch.tags[0]])
 
         for target in self.marked_target_lst:
-            setattr(target,'slots_info', set([]))
-            color_set=set([])
+            setattr(target, 'slots_info', set([]))
+            color_set = set([])
             for tag in target.tags:
                 target.slots_info.add(self.tag_slot[tag])
                 color_set.add(self.tag_color[tag])
             if orthogonal:
                 for i in range(max_color+1):
-                    if i in color_set: continue # has this identifier
-                    if i == 0 : # has no slot
+                    if i in color_set:
+                        continue  # has this identifier
+                    if i == 0:  # has no slot
                         target.slots_info.add(color_slot)
                     else:
-                        target.slots_info.add(SLOT_INFO.new_ID(0xFF,i))
-            target.slots_info=SLOTS_INFO(target.slots_info)
+                        target.slots_info.add(SLOT_INFO.new_ID(0xFF, i))
+            target.slots_info = SLOTS_INFO(target.slots_info)
 
         # count information
         import collections
-        logger.info('Coloring (by tag):' + str(collections.Counter([self.tag_color[v] for v in self.both_valid_tag])))
+        logger.info('Coloring (by tag):' +
+                    str(collections.Counter([self.tag_color[v] for v in self.both_valid_tag])))
 
-        lst=[]
+        lst = []
         for t in self.marked_target_lst:
             for tag in t.tags:
                 lst.append(self.tag_color[tag])
-        logger.info('Coloring (by target):' +str(collections.Counter(lst)))
-
+        logger.info('Coloring (by target):' + str(collections.Counter(lst)))
 
     def branch_instrument(self):
         for line in self.marked_branch_lst:
-            next_line =line.next
+            next_line = line.next
             self.unlink_line(line)
-            self.insert_lines_before(line.slot_info.build_prefix_line_and_branch(line),next_line)
+            self.insert_lines_before(
+                line.slot_info.build_prefix_line_and_branch(line), next_line)
 
     def target_instrument(self):
         for line in self.marked_target_lst:
-            next_line=line.next
+            next_line = line.next
             self.unlink_line(line)
-            self.insert_lines_before(line.slots_info.build_prefix_line_and_label(line),next_line)
+            #print(line.section_declaration)
+            # update section_align
+            section_name=line.section_declaration.get_bare_section()
+            if section_name in self.section_align.keys():
+                self.section_align[section_name]=max(self.section_align[section_name], line.slots_info.get_max_align())
+            else:
+                self.section_align[section_name] = line.slots_info.get_max_align() 
+            self.insert_lines_before(
+                line.slots_info.build_prefix_line_and_label(line), next_line)
+
+
 
     def code_instrument(self):
-        if len(self.both_valid_tag) <=1: return
+        if len(self.both_valid_tag) <= 1:
+            return
         self.branch_instrument()
         self.target_instrument()
 
@@ -1206,12 +1319,31 @@ class SCFIAsm(AsmSrc):
         Only padding, not trampoline.'''
 
         # prepare, after read cfg
-        
+
         self.cut_one_side_tags()
         self.remove_single_edge()
         self.coloring()
         self.colored_IDs()
-        self.huffman_after_coloring(orthogonal=orthogonal,max_length=max_slot_length)
+        self.huffman_after_coloring(
+            orthogonal=orthogonal, max_length=max_slot_length)
         self.code_instrument()
-        if self.max_color: self.add_ID_fail()
+        if self.max_color:
+            self.add_ID_fail()
+        self.new_lds()
         self.compile_tmp()
+    
+    def log_file(self,path):
+        import collections
+        with open(path , 'a') as f:
+            f.write('Log for %s:\n'% self.tmp_asm_path)
+            f.write('Total icalls number: %d\n'  % len(self.branch_lst))
+            f.write('Marked icalls: %d\n' % len(self.marked_branch_lst))
+            f.write('Marked targets: %d\n' % len(self.marked_branch_lst))
+            f.write('Valid tags: %d\n' % len(self.both_valid_tag))
+            f.write('Coloring (by tag):' +
+                    str(collections.Counter([self.tag_color[v] for v in self.both_valid_tag]))+'\n')
+            lst = []
+            for t in self.marked_target_lst:
+                for tag in t.tags:
+                    lst.append(self.tag_color[tag])
+            f.write('Coloring (by target):' + str(collections.Counter(lst)))

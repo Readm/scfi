@@ -213,9 +213,11 @@ class PYSPEC():
 
             if save_bc_file:
                 c="cp *.precodegen.bc "+save_bc_file
+                logger.debug(c)
                 p = subprocess.Popen(c, stdout=subprocess.PIPE, shell=True)
                 p.wait()
             c = "/usr/local/bin/llc *.precodegen.bc -o " + asm_file_name
+            logger.debug(c)
             p = subprocess.Popen(c, stdout=subprocess.PIPE, shell=True)
             p.wait()
 
@@ -227,15 +229,18 @@ class PYSPEC():
         if as_lst == None:
             as_lst = self.work_lst
         for benchmark in as_lst:
-            tmp_asm_path = os.path.join(self.work_path, benchmark, asm_name)
-            tmp_obj_path = os.path.join(self.work_path, benchmark, output_name)
+            tmp_asm_path = os.path.join(self.work_path, benchmark, 'work', asm_name)
+            tmp_obj_path = os.path.join(self.work_path, benchmark, 'work', output_name)
             cmd = 'as %s -o %s' % (tmp_asm_path, tmp_obj_path)
             logger.debug(cmd)
             p = subprocess.run(cmd, stderr=subprocess.PIPE, shell=True)
 
-    def link(self, lk_lst=None, object_name='tmp.o', output_name='tmp'):
+    def link(self, lk_lst=None, object_name='tmp.o', output_name='tmp', lds=''):
         if lk_lst == None:
             lk_lst = self.work_lst
+        if lds: # has a ld script
+            lds_arg=' -T %s'%lds
+        else: lds_arg=''
         for benchmark in lk_lst:
             obj_path = os.path.join(
                 self.work_path, benchmark, 'work', object_name)
@@ -248,11 +253,13 @@ class PYSPEC():
             if is_cpp:
                 c = '"/usr/bin/ld" "-z" "relro" "--hash-style=gnu" "--eh-frame-hdr" "-m" "elf_x86_64" "-dynamic-linker" "/lib64/ld-linux-x86-64.so.2" "-o" "%s" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu/crt1.o" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu/crti.o" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/crtbegin.o" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../../lib64" "-L/lib/x86_64-linux-gnu" "-L/lib/../lib64" "-L/usr/lib/x86_64-linux-gnu" "-L/usr/lib/../lib64" "-L/usr/lib/x86_64-linux-gnu/../../lib64" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../.." "-L/usr/local/bin/../lib" "-L/lib" "-L/usr/lib" "%s" "-lm" "-lstdc++" "-lm" "-lgcc_s" "-lgcc" "-lc" "-lgcc_s" "-lgcc" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/crtend.o" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu/crtn.o"' % (
                     output_path, obj_path)
+                c+=lds_arg
                 logger.debug(c)
                 os.popen(c)
             else:
                 c = '"/usr/bin/ld" "-z" "relro" "--hash-style=gnu" "--eh-frame-hdr" "-m" "elf_x86_64" "-dynamic-linker" "/lib64/ld-linux-x86-64.so.2" "-o" "%s" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu/crt1.o" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu/crti.o" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/crtbegin.o" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../../lib64" "-L/lib/x86_64-linux-gnu" "-L/lib/../lib64" "-L/usr/lib/x86_64-linux-gnu" "-L/usr/lib/../lib64" "-L/usr/lib/x86_64-linux-gnu/../../lib64" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../.." "-L/usr/local/bin/../lib" "-L/lib" "-L/usr/lib" "%s" "-lm" "-lgcc" "--as-needed" "-lgcc_s" "--no-as-needed" "-lc" "-lgcc" "--as-needed" "-lgcc_s" "--no-as-needed" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/crtend.o" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu/crtn.o"' % (
                     output_path, obj_path)
+                c+=lds_arg
                 logger.debug(c)
                 os.popen(c)
 

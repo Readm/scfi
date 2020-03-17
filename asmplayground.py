@@ -115,11 +115,16 @@ class Line(str):
         return True if self.is_directive and self.get_directive_type() in ['.section', '.data', '.text'] else False
 
     def get_section(self):
+        '''Return the section and the flags'''
         if not self.is_section_directive:
             return False
         if self.get_directive_type() in ['.data', '.text']:
             return self.get_directive_type()
-        return self.split(None, 1)[-1]
+        return self.split(None, 1)[-1].strip()
+    
+    def get_bare_section(self):
+        '''Return the section name only'''
+        return '.'+self.get_section().split(',',1)[0].split('.')[1]
 
     @property
     def is_loc_directive(self):
@@ -182,6 +187,7 @@ class AsmSrc(str):
                 self.functions.append(function_name)
 
             if line.is_label:
+                line.set_section_declaration(current_section)
                 self.label_list.append(line)
                 self.labels[line.get_label()] = line
 

@@ -36,21 +36,21 @@ def test3():
 
 
 #spec_lst=['400.perlbench', '401.bzip2', '403.gcc', '429.mcf', '445.gobmk', '456.hmmer', '458.sjeng', '462.libquantum', '464.h264ref', '471.omnetpp', '473.astar', '483.xalancbmk']
-spec_lst=runspec.SPEC2006_C
-spec_lst=['400.perlbench']
+runspec.SPEC2006_C.extend(runspec.SPEC2006_CPP)
+spec_lst = runspec.SPEC2006_C
+# spec_lst=['433.milc']
 
 def test4():
-    logger.setLevel(logging.INFO)
     for name in spec_lst:
-
         filePath = '/home/readm/scfi/workload/%s/work/vtable.s' % name
         src_path = '/home/readm/scfi/workload/%s/work/' % name
         work_path = src_path.replace('fast-cfi', 'scfi')
-        cfg_path = '/home/readm/scfi/workload/%s/work/tmp.txt' % name
+        cfg_path = '/home/readm/scfi/workload/%s/work/scfi_tmp.cfg' % name
         asm = SCFIAsm.read_file(filePath, src_path=src_path)
         asm.tmp_asm_path = work_path+'scfi_tmp.s'
         asm.tmp_obj_path = work_path+'scfi_tmp.o'
         asm.tmp_dmp_path = work_path+'scfi_tmp.dump'
+        asm.tmp_lds_path = work_path+'scfi_tmp.lds'
         asm.move_file_directives_forward()
         asm.mark_all_instructions(cfg=CFG.read_from_llvm_pass(cfg_path))
         asm.scfi_all()
@@ -66,15 +66,29 @@ def test5():
     # import time
     # time.sleep(1)
     spec.get_fake_cmd(runspec.PYSPEC.get_runspec_cmd(config_file='vtable',size='test'))
-    spec.link(object_name='scfi_tmp.o',output_name='scfi_tmp')
+    spec.lto_compile(asm_file_name='vtable.s')
+    spec.assemble(asm_name='vtable.s',output_name='vtable.o')
+    spec.link(object_name='vtable.o',output_name='vtable')
     #spec.copy_input_data(size='test')
     #spec.clear_err_file()
-    spec.run_cycle(size='test', filelst=['./scfi_tmp'])
+    spec.run_cycle(size='test', filelst=['./vtable'])
     import time
     #time.sleep(5)
     spec.list_err_file()
 
+def prepare_cfg():
+    spec_path = '/home/readm/SPEC2006'
+    work_path = '/home/readm/scfi/workload/'
+    log_path = '/home/readm/scfi/log'
+    version = 2006  # or 2000, 2017 if needed
+    spec = runspec.PYSPEC(spec_path, work_path, log_path, version)
+    spec.work_lst=spec_lst
+    spec.get_fake_cmd(runspec.PYSPEC.get_runspec_cmd(config_file='vtable',size='test'))
+    spec.do('opt -load ~/llvm10/build/lib/LLVMSCFI.so -indirect-calls *.0.0.* 1>/dev/null 2>scfi_tmp.cfg')
 
 
 
-test4()
+logger = logging.getLogger('PYSPEC')
+logger.setLevel(logging.INFO)
+
+test5()
