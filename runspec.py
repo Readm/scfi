@@ -69,7 +69,8 @@ class PYSPEC():
         return [f for f in os.listdir(self.bench_path) if os.path.isdir((os.path.join(self.bench_path, f)))]
 
     def copy_src(self, cp_lst=None):
-        if cp_lst == None:  cp_lst = self.work_lst
+        if cp_lst == None:
+            cp_lst = self.work_lst
         for f in cp_lst:
             shutil.copytree(os.path.join(self.bench_path, f, 'src'),
                             os.path.join(self.work_path, f, 'src'))
@@ -96,14 +97,16 @@ class PYSPEC():
                     if 'input' in os.listdir(os.path.join(data_path, folder)):
                         for node in os.listdir(os.path.join(data_path, folder, 'input')):
                             if os.path.exists(os.path.join(self.work_path, benchmark, 'work', node)):
-                                continue
+                                if os.path.isfile(os.path.join(data_path, folder, 'input', node)):
+                                    os.remove(os.path.join(self.work_path, benchmark, 'work', node))
+                                else:
+                                    shutil.rmtree(os.path.join(self.work_path, benchmark, 'work', node))
                             if os.path.isfile(os.path.join(data_path, folder, 'input', node)):
                                 shutil.copy(os.path.join(data_path, folder, 'input', node), os.path.join(
                                     self.work_path, benchmark, 'work', node))
                             if os.path.isdir(os.path.join(data_path, folder, 'input', node)):
                                 shutil.copytree(os.path.join(data_path, folder, 'input', node), os.path.join(
                                     self.work_path, benchmark, 'work', node))
-
 
     def parse(self, _str):
         stage = ''
@@ -184,7 +187,6 @@ class PYSPEC():
             cmd += '-noreportable '
         return cmd
 
-
     def get_cmds_by_name(self, name):
         for cmd in self.all_cmd:
             if cmd.name == name:
@@ -203,7 +205,8 @@ class PYSPEC():
             for c in tqdm(cmd[:-1]):
                 if c.strip():
                     logger.debug(c)
-                    p = subprocess.Popen(c+add_args, stdout=subprocess.PIPE, shell=True)
+                    p = subprocess.Popen(
+                        c+add_args, stdout=subprocess.PIPE, shell=True)
                     p.wait()
 
             c = cmd[-1] + ' -save-temps -Wl,-plugin-opt=save-temps'
@@ -212,7 +215,7 @@ class PYSPEC():
             p.wait()
 
             if save_bc_file:
-                c="cp *.precodegen.bc "+save_bc_file
+                c = "cp *.precodegen.bc "+save_bc_file
                 logger.debug(c)
                 p = subprocess.Popen(c, stdout=subprocess.PIPE, shell=True)
                 p.wait()
@@ -229,8 +232,10 @@ class PYSPEC():
         if as_lst == None:
             as_lst = self.work_lst
         for benchmark in as_lst:
-            tmp_asm_path = os.path.join(self.work_path, benchmark, 'work', asm_name)
-            tmp_obj_path = os.path.join(self.work_path, benchmark, 'work', output_name)
+            tmp_asm_path = os.path.join(
+                self.work_path, benchmark, 'work', asm_name)
+            tmp_obj_path = os.path.join(
+                self.work_path, benchmark, 'work', output_name)
             cmd = 'as %s -o %s' % (tmp_asm_path, tmp_obj_path)
             logger.debug(cmd)
             p = subprocess.run(cmd, stderr=subprocess.PIPE, shell=True)
@@ -238,9 +243,10 @@ class PYSPEC():
     def link(self, lk_lst=None, object_name='tmp.o', output_name='tmp', lds=''):
         if lk_lst == None:
             lk_lst = self.work_lst
-        if lds: # has a ld script
-            lds_arg=' -T %s'%lds
-        else: lds_arg=''
+        if lds:  # has a ld script
+            lds_arg = ' -T %s' % lds
+        else:
+            lds_arg = ''
         for benchmark in lk_lst:
             obj_path = os.path.join(
                 self.work_path, benchmark, 'work', object_name)
@@ -253,66 +259,70 @@ class PYSPEC():
             if is_cpp:
                 c = '"/usr/bin/ld" "-z" "relro" "--hash-style=gnu" "--eh-frame-hdr" "-m" "elf_x86_64" "-dynamic-linker" "/lib64/ld-linux-x86-64.so.2" "-o" "%s" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu/crt1.o" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu/crti.o" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/crtbegin.o" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../../lib64" "-L/lib/x86_64-linux-gnu" "-L/lib/../lib64" "-L/usr/lib/x86_64-linux-gnu" "-L/usr/lib/../lib64" "-L/usr/lib/x86_64-linux-gnu/../../lib64" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../.." "-L/usr/local/bin/../lib" "-L/lib" "-L/usr/lib" "%s" "-lm" "-lstdc++" "-lm" "-lgcc_s" "-lgcc" "-lc" "-lgcc_s" "-lgcc" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/crtend.o" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu/crtn.o"' % (
                     output_path, obj_path)
-                c+=lds_arg
+                c += lds_arg
                 logger.debug(c)
                 os.popen(c)
             else:
                 c = '"/usr/bin/ld" "-z" "relro" "--hash-style=gnu" "--eh-frame-hdr" "-m" "elf_x86_64" "-dynamic-linker" "/lib64/ld-linux-x86-64.so.2" "-o" "%s" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu/crt1.o" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu/crti.o" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/crtbegin.o" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../../lib64" "-L/lib/x86_64-linux-gnu" "-L/lib/../lib64" "-L/usr/lib/x86_64-linux-gnu" "-L/usr/lib/../lib64" "-L/usr/lib/x86_64-linux-gnu/../../lib64" "-L/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../.." "-L/usr/local/bin/../lib" "-L/lib" "-L/usr/lib" "%s" "-lm" "-lgcc" "--as-needed" "-lgcc_s" "--no-as-needed" "-lc" "-lgcc" "--as-needed" "-lgcc_s" "--no-as-needed" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/crtend.o" "/usr/lib/gcc/x86_64-linux-gnu/5.4.0/../../../x86_64-linux-gnu/crtn.o"' % (
                     output_path, obj_path)
-                c+=lds_arg
+                c += lds_arg
                 logger.debug(c)
                 os.popen(c)
 
-
-    def run_cycle(self, size='ref', filelst=['tmp'], ru_lst = None):
-        if ru_lst==None: ru_lst = self.work_lst
-        for benchmark in ru_lst: 
-            cmds=self.get_cmds_by_name(benchmark)
-            for filename in filelst:
-                logger.info('Running %s with file %s...' %
-                            (benchmark, filename))
-                os.chdir(os.path.join(self.work_path,benchmark,'work'))
-                total_takes = 0
-                try:
-                    run_cmd = cmds.run_cmd
-                    for c in run_cmd:
-                        if c.startswith('#'): continue
-                        if c.startswith('cd'): continue
-                        c = filename+' '+c.split(' ', 1)[-1]
-                        c = c.replace('>>', '>')
-                        logger.debug(c)
-                        start = time()
-                        p = subprocess.Popen(c, stdout=subprocess.PIPE, shell=True)
-                        p.wait()
-                        takes = time()-start
-                        logger.info('Finished after %d seconds.' % takes)
-                        total_takes += takes
-                except Exception:
-                    with open(os.path.join(self.log_path, 'error.log'), 'a') as f:
-                        f.write(cmds.name+traceback.format_exc())
+    def run_cycle(self, size='ref', filelst=['tmp'], n=1, ru_lst=None):
+        if ru_lst == None:
+            ru_lst = self.work_lst
+        for benchmark in ru_lst:
+            cmds = self.get_cmds_by_name(benchmark)
+            for _ in range(n):
+                for filename in filelst:
+                    logger.info('Running %s with file %s...' %
+                                (benchmark, filename))
+                    os.chdir(os.path.join(self.work_path, benchmark, 'work'))
+                    total_takes = 0
+                    try:
+                        run_cmd = cmds.run_cmd
+                        for c in run_cmd:
+                            if c.startswith('#'):
+                                continue
+                            if c.startswith('cd'):
+                                continue
+                            c = filename+' '+c.split(' ', 1)[-1]
+                            c = c.replace('>>', '>')
+                            logger.debug(c)
+                            start = time()
+                            p = subprocess.Popen(
+                                c, stdout=subprocess.PIPE, shell=True)
+                            p.wait()
+                            takes = time()-start
+                            logger.info('Finished after %d seconds.' % takes)
+                            total_takes += takes
+                    except Exception:
+                        with open(os.path.join(self.log_path, 'error.log'), 'a') as f:
+                            f.write(cmds.name+traceback.format_exc())
+                        with open(os.path.join(self.log_path, 'run.log'), 'a') as f:
+                            f.write('Run %s: faild @ size=%s, file=%s.\n' %
+                                    (cmds.name, size, filename))
+                    logger.info('Finished %s: %d seconds.' %
+                                (cmds.name, total_takes))
                     with open(os.path.join(self.log_path, 'run.log'), 'a') as f:
-                        f.write('Run %s: faild @ size=%s, file=%s.\n' %
-                                (cmds.name, size, filename))
-                logger.info('Finished %s: %d seconds.' %
-                            (cmds.name, total_takes))
-                with open(os.path.join(self.log_path, 'run.log'), 'a') as f:
-                    f.write('Run %s: %f seconds @ size=%s, file=%s.\n' %
-                            (cmds.name, total_takes, size, filename))
-    
-    def do(self,cmd, do_lst=None):
-        if do_lst==None: do_lst= self.work_lst
+                        f.write('Run %s: %f seconds @ size=%s, file=%s.\n' %
+                                (cmds.name, total_takes, size, filename))
+
+    def do(self, cmd, do_lst=None):
+        if do_lst == None:
+            do_lst = self.work_lst
         for benchmark in do_lst:
-            os.chdir(os.path.join(self.work_path,benchmark,'work'))
+            os.chdir(os.path.join(self.work_path, benchmark, 'work'))
             os.system(cmd)
 
     def clear_err_file(self, do_lst=None):
-        self.do("rm -f ./*.err",do_lst)
-    
+        self.do("rm -f ./*.err", do_lst)
+
     def list_err_file(self, do_lst=None):
-        if do_lst==None: do_lst= self.work_lst
+        if do_lst == None:
+            do_lst = self.work_lst
         for benchmark in do_lst:
             print('---------------------- errs of ', benchmark)
-            os.chdir(os.path.join(self.work_path,benchmark,'work'))
+            os.chdir(os.path.join(self.work_path, benchmark, 'work'))
             os.system('cat *.err')
-
-

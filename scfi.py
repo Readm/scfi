@@ -179,7 +179,7 @@ class IDLine(Line):
         for i in range(offset):
             s = hex(v & 0xff)+', '+s
             v = v >> 8
-        return cls('\t.byte\t'+s[:-2])
+        return cls('\t.byte\t'+s[:-2]+'\t# scfi_tmp IDs')
 
 
 class CFG():
@@ -216,19 +216,33 @@ class CFG():
     def read_from_llvm_pass(cls, path):
         def class_strip(s):
             import re
-            pattern = re.compile(r"class\.[^:]+::[^\.]+\.[\.\d]+")
+
+            pattern = re.compile(r"class\.[^:]+::[^\.]+\.[\d.]+")
             lst = re.findall(pattern, s)
             for _type in lst:
                 pattern = re.compile(r"class\.[^:]+::[^\.]+")
                 new_type = re.match(pattern, _type).group()
                 s = s.replace(_type, new_type)
-            pattern = re.compile(r"struct\.[^:]+::[^\.]+\.[\.\d]+")
+
+            pattern = re.compile(r"struct\.[\w]+\.[\d.]+")
             lst = re.findall(pattern, s)
             for _type in lst:
-                pattern = re.compile(r"struct\.[^:]+::[^\.]+")
+                pattern = re.compile(r"struct\.[\w]+")
                 new_type = re.match(pattern, _type).group()
                 s = s.replace(_type, new_type)
             return s
+        
+        union_set=[]
+        if os.path.exists(os.path.join(os.path.split(path)[0],'scfi_tmp.union')):
+            with open(os.path.join(os.path.split(path)[0],'scfi_tmp.union')) as f:
+                union_l = []
+                for line in f:
+                    if not line.startswith('(end)'):
+                        union_l.append(line.strip())
+                    else:
+                        union_set.append(union_l)
+                        union_l=[]
+
 
         with open(path) as f:
             target, branch = dict(), dict()
@@ -242,6 +256,7 @@ class CFG():
             items = set()
             current_set = None  # empty
             for line in f:
+                if line.startswith('#'): continue # white list
                 if line.startswith('Virtual Function Branches:'):
                     current_set = virtual_branch
                     continue
@@ -262,6 +277,9 @@ class CFG():
                     continue
                 if line.startswith('Type:'):
                     _type = class_strip(line.strip()[6:])
+                    for union_lst in union_set:
+                        if _type in union_lst:
+                            _type=union_lst[0]
                     # print(_type)
                     continue
                 try:
@@ -383,18 +401,22 @@ class SLOT_INFO():
     def new_ID(cls, value, width):
         return cls(value, width, True)
 
-    def build_prefix_line_and_branch(self, branch_line):
+    def build_prefix_line_and_branch(self, branch_line,debug=False):
         lines = []
         if self.is_traditional:
             if global_env.isa == X86:
                 if global_env.syntax == ATT:
                     call_expr = tk.get_call_expr(branch_line)
                     lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
-                    lines.append(Line('\tsub\t$%s, %%r11' % str(self.width+1)))
-                    lines.append(Line('\tcmpb\t*%%r11, $%s' % hex(self.value)))
-                    lines.append(Line('\tadd\t$%s, %%r11' % str(self.width+1)))
-                    lines.append(Line('\tjne\t__scfi_ID_fail'))
-                    lines.append(Line('\tcallq \t*%r11'))
+                    # lines.append(Line('\tsub\t$%s, %%r11' % str(self.width+1)))
+                    lines.append(Line('\tcmpb\t $%s, -%d(%%r11)' % (hex(self.value),self.width+1)))
+                    # lines.append(Line('\tadd\t$%s, %%r11' % str(self.width+1)))
+                    lines.append(Line('\tje\t.+4'))
+                    #lines.append(Line('\tud2'))
+                    lines.append(Line('\tint3'))
+                    lines.append(Line('\tint3'))
+
+                    lines.append(Line('\tcallq \t*%r11\t\t# scfi_call ID'))
                     return lines
             raise Exception('Unsupported syntax or ISA')
         else:
@@ -402,14 +424,28 @@ class SLOT_INFO():
                 if global_env.syntax == ATT:
                     call_expr = tk.get_call_expr(branch_line)
                     slot_mask = 0xffffffffffffffff ^ ((1 << self.width)-1)
-                    slot_clear_line = Line(
-                        '\tand\t$%s, %%r11' % hex(slot_mask))
-                    slot_write_line = Line(
-                        '\tor\t$%s, %%r11' % hex(self.value))
-                    lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
-                    lines.append(slot_clear_line)
-                    lines.append(slot_write_line)
-                    lines.append(Line('\tcallq \t*%r11'))
+                    if debug:
+                        lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
+                        # reserve slot
+                        slot_clear_line = Line(
+                            '\tand\t$%s, %%r11' % hex((1 << self.width)-1))
+                        lines.append(slot_clear_line)
+                        lines.append(Line('\tcmp\t $%s, %%r11' % self.value))
+                        lines.append(Line('\tje\t.+4'))
+                        lines.append(Line('\tint3'))
+                        lines.append(Line('\tint3'))
+                        # lines.append(Line('\tud2'))
+                        lines.append(Line('\tcallq *%s\t\t# scfi_call slot debug' % call_expr))
+                    else:
+                        slot_mask = 0xffffffffffffffff ^ ((1 << self.width)-1)
+                        slot_clear_line = Line(
+                            '\tand\t$%s, %%r11' % hex(slot_mask))
+                        slot_write_line = Line(
+                            '\tor\t$%s, %%r11' % hex(self.value))
+                        lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
+                        lines.append(slot_clear_line)
+                        lines.append(slot_write_line)
+                        lines.append(Line('\tcallq \t*%r11\t# scfi_call slot'))
                     return lines
             raise Exception('Unsupported syntax or ISA')
 
@@ -426,12 +462,17 @@ class SLOTS_INFO():
                 max_align = max(max_align, slot.width)
         return max_align
 
-    def build_prefix_line_and_label(self, label_line):
+    def build_prefix_line_and_label(self, label_line, debug=False):
         '''Build target prefix line and label based on the slot info. Output pattern:
         multi tag: |slot1 landingpad|...|slot2|.....|slot3|....|jump label|IDs|label|
         only one slot: padding|label|landingpad
         only IDs: IDs|label|landingpad
         '''
+        if debug:
+            offset_lst = [slot.offset for slot in self.slots if slot.is_traditional]
+            if len(set(offset_lst))!=len(offset_lst):
+                raise Exception("Same offset IDs.")
+
         # Build traditional ID prefix first
         tra_slots = [s for s in self.slots if s.is_traditional]
         tra_prefix = 0
@@ -1081,18 +1122,20 @@ class SCFIAsm(AsmSrc):
 
     def new_lds(self):
         '''Ensure the alignment in ld script'''
-        if not self.section_align:  return
+        default_lds_path = '/home/readm/scfi/default.lds'
+        if not self.section_align:  
+            import shutil
+            shutil.copy(default_lds_path, self.tmp_lds_path)
 
         unlikely_s, exit_s, startup_s, hot_s, other_s=[],[],[],[],[]
         for section_name in self.section_align.keys():
-
             align_width=self.section_align[section_name]
             if  align_width<=4: continue 
             if '.text' not in section_name:
                 logger.warn('Try to change alignment of a non-text section: %s', section_name)
             align_value=1<<align_width
             align_line="    . = ALIGN(%s);\n" % hex(align_value)
-            section_line="    %s\n" % section_name
+            section_line="    *(%s)\n" % section_name
             current_set=None
             if 'unlikely' in section_name:
                 current_set=unlikely_s
@@ -1106,7 +1149,7 @@ class SCFIAsm(AsmSrc):
                 current_set=other_s
             current_set.append(align_line)
             current_set.append(section_line)
-        with open('default.lds') as fi:
+        with open(default_lds_path) as fi:
             with open(self.tmp_lds_path,'w') as fo:
                 for line in fi:
                     fo.write(line)
@@ -1167,15 +1210,16 @@ class SCFIAsm(AsmSrc):
             current_max_color += 1
             if not this_round_changed:
                 break
+
         import collections
-        logger.info('Coloring (by tag):' +
+        logger.debug('Coloring first try (by tag):' +
                     str(collections.Counter([self.tag_color[v] for v in self.both_valid_tag])))
 
         lst = []
         for t in self.marked_target_lst:
             for tag in t.tags:
                 lst.append(self.tag_color[tag])
-        logger.info('Coloring (by target):' + str(collections.Counter(lst)))
+        logger.debug('Coloring first try (by target):' + str(collections.Counter(lst)))
 
     def colored_IDs(self):
         '''After coloring, assign each tag a ID'''
@@ -1220,16 +1264,15 @@ class SCFIAsm(AsmSrc):
 
         # if encoding too long
         if max([len(x) for x in code.values()]) > max_length:
-            current_color_ID = dict()
             current_ID = 0
             first_color = self.max_color+1
-            sorted_lst = sorted([t for t in self.both_valid_tag],
+            sorted_lst = sorted([t for t in self.both_valid_tag if self.tag_color[t]==0],
                                 key=lambda x: self.tag_target_count(x), reverse=True)
             while True:
                 for _ in range(len(sorted_lst)//4):
                     tag = sorted_lst.pop()
                     self.tag_color[tag] = first_color+(current_ID//256)
-                    self.tag_id[tag] = current_ID
+                    self.tag_id[tag] = current_ID % 256
                     current_ID += 1
                 code = codebook(get_input(), weight_fun=lambda x, y: 2*(x+y))
                 logger.info("Huffman encoded after coloring (try): max length %d" % max(
@@ -1239,6 +1282,36 @@ class SCFIAsm(AsmSrc):
         
         # record a global max length
         self.max_slot_length = max([len(x) for x in code.values()])
+
+        # count information
+        import collections
+        logger.info('Coloring (by tag):' +
+                    str(collections.Counter([self.tag_color[v] for v in self.both_valid_tag])))
+
+        lst = []
+        for t in self.marked_target_lst:
+            for tag in t.tags:
+                lst.append(self.tag_color[tag])
+        counts=collections.Counter(lst)
+        logger.info('Coloring (by target):' + str(counts))
+
+        # sort color number from more to less
+        sorted_color=sorted([color for color in counts.keys() if color!=0],key= lambda x: counts[x],reverse=True)
+        old_to_new=dict()
+        for i in range(len(sorted_color)):
+            old_to_new[sorted_color[i]]=i+1
+        for tag in self.both_valid_tag:
+            if self.tag_color[tag]: # skip 0
+                self.tag_color[tag]=old_to_new[self.tag_color[tag]]
+
+
+        lst = []
+        for t in self.marked_target_lst:
+            for tag in t.tags:
+                lst.append(self.tag_color[tag])
+        counts=collections.Counter(lst)
+        logger.info('Sorted Coloring (by target):' + str(counts))
+
 
         color_slot = None  # slot info for colored
         max_color = self.max_color
@@ -1274,61 +1347,54 @@ class SCFIAsm(AsmSrc):
                         target.slots_info.add(SLOT_INFO.new_ID(0xFF, i))
             target.slots_info = SLOTS_INFO(target.slots_info)
 
-        # count information
-        import collections
-        logger.info('Coloring (by tag):' +
-                    str(collections.Counter([self.tag_color[v] for v in self.both_valid_tag])))
 
-        lst = []
-        for t in self.marked_target_lst:
-            for tag in t.tags:
-                lst.append(self.tag_color[tag])
-        logger.info('Coloring (by target):' + str(collections.Counter(lst)))
 
-    def branch_instrument(self):
+    def branch_instrument(self,debug=False):
         for line in self.marked_branch_lst:
             next_line = line.next
             self.unlink_line(line)
             self.insert_lines_before(
-                line.slot_info.build_prefix_line_and_branch(line), next_line)
+                line.slot_info.build_prefix_line_and_branch(line,debug=debug), next_line)
 
     def target_instrument(self):
-        for line in self.marked_target_lst:
-            next_line = line.next
-            self.unlink_line(line)
-            #print(line.section_declaration)
-            # update section_align
-            section_name=line.section_declaration.get_bare_section()
-            if section_name in self.section_align.keys():
-                self.section_align[section_name]=max(self.section_align[section_name], line.slots_info.get_max_align())
-            else:
-                self.section_align[section_name] = line.slots_info.get_max_align() 
-            self.insert_lines_before(
-                line.slots_info.build_prefix_line_and_label(line), next_line)
+        if len(self.both_valid_tag) <= 1: # if no slot, only marks for landingpad
+            for line in  self.marked_target_lst:
+                self.insert_after(self.toolkit.get_landing_pad_line(),line)
+        else:
+            for line in self.marked_target_lst:
+                next_line = line.next
+                self.unlink_line(line)
+                # update section_align
+                section_name=line.section_declaration.get_bare_section()
+                if section_name in self.section_align.keys():
+                    self.section_align[section_name]=max(self.section_align[section_name], line.slots_info.get_max_align())
+                else:
+                    self.section_align[section_name] = line.slots_info.get_max_align() 
+                self.insert_lines_before(
+                    line.slots_info.build_prefix_line_and_label(line), next_line)
 
-
-
-    def code_instrument(self):
+    def code_instrument(self,debug=False):
+        self.target_instrument()
         if len(self.both_valid_tag) <= 1:
             return
-        self.branch_instrument()
-        self.target_instrument()
+        self.branch_instrument(debug=debug)
 
-    def scfi_all(self, orthogonal=True, max_slot_length=8):
+    def scfi_all(self, orthogonal=True, max_slot_length=8,debug=False):
         '''Paper version: branch with only one identifier, branch may has multiple.
         Only padding, not trampoline.'''
 
         # prepare, after read cfg
 
+        self.try_convert_indirect()
         self.cut_one_side_tags()
         self.remove_single_edge()
         self.coloring()
         self.colored_IDs()
         self.huffman_after_coloring(
             orthogonal=orthogonal, max_length=max_slot_length)
-        self.code_instrument()
-        if self.max_color:
-            self.add_ID_fail()
+        self.code_instrument(debug=debug)
+        # if self.max_color:
+        #     self.add_ID_fail()
         self.new_lds()
         self.compile_tmp()
     
@@ -1347,3 +1413,14 @@ class SCFIAsm(AsmSrc):
                 for tag in t.tags:
                     lst.append(self.tag_color[tag])
             f.write('Coloring (by target):' + str(collections.Counter(lst)))
+
+    def try_convert_indirect(self):
+        for branch in [b for b in self.marked_branch_lst]:
+            '''Some indirect call has a "callq *Label" format, we directly dereference the pointer here.'''
+            if self.toolkit.get_call_expr(branch) in self.label_name_to_line.keys():    # call *Label
+                if self.label_name_to_line[self.toolkit.get_call_expr(branch)].next.get_directive_type()=='.quad':  #Label:\n  .quad label_name
+                    traget_name=self.label_name_to_line[self.toolkit.get_call_expr(branch)].next.strip_comment().split()[-1].strip()
+                    if traget_name in self.functions:
+                        branch.set_str("\tcallq\t%s"%traget_name)
+                        self.marked_branch_lst.remove(branch)
+                        

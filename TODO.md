@@ -17,10 +17,9 @@
     + [x]  X86
     + [ ]  ARM
     + [ ]  RISC-V
+  + [x] 处理不同section的对齐
+  + [x] C++ sections
   + [ ] 动态库支持
-    + [ ] 添加object的slot使用信息
-    + [x] 处理不同section的对齐(not automatic yet)
-    + [ ] C++ sections
 + [ ] CFG
   + [x] LLVM icall
   + [x] C++ 虚函数

@@ -1,0 +1,7 @@
+no indirect branch:
+429.mcf, 462.libquantum, 470.lbm
+pass cfi:
+400.perlbench, 401.bzip2, 445.gobmk, 456.hmmer, 458.sjeng, 464.h264ref, 433.milc, 473.astar, 444.namd, 453.povray, 471.omnetpp, 403.gcc,
+only pass compile:
+483.xalancbmk
+not pass compile:

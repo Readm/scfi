@@ -121,10 +121,10 @@ class Line(str):
         if self.get_directive_type() in ['.data', '.text']:
             return self.get_directive_type()
         return self.split(None, 1)[-1].strip()
-    
+
     def get_bare_section(self):
         '''Return the section name only'''
-        return '.'+self.get_section().split(',',1)[0].split('.')[1]
+        return self.get_section().split(',', 1)[0]
 
     @property
     def is_loc_directive(self):
@@ -158,7 +158,7 @@ class AsmSrc(str):
             self.lines[index].next = self.lines[index+1]
             self.lines[index+1].prev = self.lines[index]
         self.HEAD = self.lines[0]
-        self.labels = dict()
+        self.label_name_to_line = dict()  # label->line
         self.label_list = []  # in order
         self.section_lines = []
 
@@ -189,7 +189,7 @@ class AsmSrc(str):
             if line.is_label:
                 line.set_section_declaration(current_section)
                 self.label_list.append(line)
-                self.labels[line.get_label()] = line
+                self.label_name_to_line[line.get_label()] = line
 
             if line.is_loc_directive:
                 current_loc = line.get_loc
@@ -240,7 +240,7 @@ class AsmSrc(str):
 
     def find_label(self, label):
         try:
-            return self.labels[label]
+            return self.label_name_to_line[label]
         except KeyError:
             raise
             logger.debug('label %s not found' % label)
