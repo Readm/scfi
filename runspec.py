@@ -326,3 +326,21 @@ class PYSPEC():
             print('---------------------- errs of ', benchmark)
             os.chdir(os.path.join(self.work_path, benchmark, 'work'))
             os.system('cat *.err')
+
+    def get_exe_code_size(self, filename='', do_lst=None):
+        output=''
+        if do_lst == None:
+            do_lst = self.work_lst
+        for benchmark in do_lst:
+            total_size=0
+            os.chdir(os.path.join(self.work_path, benchmark, 'work'))
+            result = subprocess.run(['readelf', '-S', filename], stdout=subprocess.PIPE)
+            for line in result.stdout.decode('ascii').split('\n'):
+                lst=line.split()
+                if len(lst)==6: 
+                    if 'X' in lst[2]:
+                        size=int(lst[0],16)
+                        total_size+=size
+            
+            output+=benchmark+' '+str(total_size)+'\n'
+        return output

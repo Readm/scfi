@@ -108,7 +108,7 @@ class Line(str):
     def is_label(self): return self.type == 'label'
 
     def get_label(self): return self.strip_comment().strip().split()[
-        0].replace(':', '') if self.is_label else None
+        0].replace(':', '') if self.is_label else ''
 
     @property
     def is_section_directive(self):
@@ -233,6 +233,14 @@ class AsmSrc(str):
         for key in [k for k in self.debug_file_number.keys()]:
             if key.startswith('.'):
                 new_key = key.replace('.', '')
+                self.debug_file_number[new_key] = self.debug_file_number[key]
+
+        # we add the single file name without name as the key too,
+        # in some big programs, this is required
+        # but, this may cause conflict, as different path may have same file name
+        for key in [k for k in self.debug_file_number.keys()]:
+            if '/' in key:
+                new_key = key.split('/')[-1]
                 self.debug_file_number[new_key] = self.debug_file_number[key]
 
     def get_file_numbers(self):

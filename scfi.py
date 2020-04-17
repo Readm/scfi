@@ -213,10 +213,11 @@ class CFG():
             return cls(target=target, branch=branch)
 
     @classmethod
-    def read_from_llvm_pass(cls, path):
+    def read_from_llvm_pass(cls, path, ignore_class_name=False):
         def class_strip(s):
             import re
 
+            #strip class/struct number
             pattern = re.compile(r"class\.[^:]+::[^\.]+\.[\d.]+")
             lst = re.findall(pattern, s)
             for _type in lst:
@@ -401,19 +402,20 @@ class SLOT_INFO():
     def new_ID(cls, value, width):
         return cls(value, width, True)
 
-    def build_prefix_line_and_branch(self, branch_line,debug=False):
+    def build_prefix_line_and_branch(self, branch_line,debug=False,skip_lib=False):
         lines = []
         if self.is_traditional:
             if global_env.isa == X86:
                 if global_env.syntax == ATT:
                     call_expr = tk.get_call_expr(branch_line)
                     lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
+                    if skip_lib:
+                            lines.append(Line('\tcmpq\t $0xFFFFFFF,  %r11' ))
+                            lines.append(Line('\tjge\t.+10'))
                     # lines.append(Line('\tsub\t$%s, %%r11' % str(self.width+1)))
                     lines.append(Line('\tcmpb\t $%s, -%d(%%r11)' % (hex(self.value),self.width+1)))
                     # lines.append(Line('\tadd\t$%s, %%r11' % str(self.width+1)))
-                    lines.append(Line('\tje\t.+4'))
-                    #lines.append(Line('\tud2'))
-                    lines.append(Line('\tint3'))
+                    lines.append(Line('\tje\t.+3'))
                     lines.append(Line('\tint3'))
 
                     lines.append(Line('\tcallq \t*%r11\t\t# scfi_call ID'))
@@ -426,13 +428,16 @@ class SLOT_INFO():
                     slot_mask = 0xffffffffffffffff ^ ((1 << self.width)-1)
                     if debug:
                         lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
+                        # todo the offset 14 is not correct
+                        # if skip_lib:
+                        #     lines.append(Line('\tcmp\t $0xFFFFFFFF, %r11'))
+                        #     lines.append(Line('\tjle\t.+14'))
                         # reserve slot
                         slot_clear_line = Line(
                             '\tand\t$%s, %%r11' % hex((1 << self.width)-1))
                         lines.append(slot_clear_line)
                         lines.append(Line('\tcmp\t $%s, %%r11' % self.value))
-                        lines.append(Line('\tje\t.+4'))
-                        lines.append(Line('\tint3'))
+                        lines.append(Line('\tje\t.+3'))
                         lines.append(Line('\tint3'))
                         # lines.append(Line('\tud2'))
                         lines.append(Line('\tcallq *%s\t\t# scfi_call slot debug' % call_expr))
@@ -443,6 +448,14 @@ class SLOT_INFO():
                         slot_write_line = Line(
                             '\tor\t$%s, %%r11' % hex(self.value))
                         lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
+                        if skip_lib:
+                            if debug: # debug
+                                lines.append(Line('\tcmpq\t $0xFFFFFFF,  %r11' ))
+                                lines.append(Line('\tjle\t.+3'))
+                                lines.append(Line('\tint3'))
+                            else:
+                                lines.append(Line('\tcmpq\t $0xFFFFFFF,  %r11' ))
+                                lines.append(Line('\tjge\t.+10'))
                         lines.append(slot_clear_line)
                         lines.append(slot_write_line)
                         lines.append(Line('\tcallq \t*%r11\t# scfi_call slot'))
@@ -1349,12 +1362,12 @@ class SCFIAsm(AsmSrc):
 
 
 
-    def branch_instrument(self,debug=False):
+    def branch_instrument(self,debug=False, skip_lib=False):
         for line in self.marked_branch_lst:
             next_line = line.next
             self.unlink_line(line)
             self.insert_lines_before(
-                line.slot_info.build_prefix_line_and_branch(line,debug=debug), next_line)
+                line.slot_info.build_prefix_line_and_branch(line,debug=debug, skip_lib=skip_lib), next_line)
 
     def target_instrument(self):
         if len(self.both_valid_tag) <= 1: # if no slot, only marks for landingpad
@@ -1362,24 +1375,35 @@ class SCFIAsm(AsmSrc):
                 self.insert_after(self.toolkit.get_landing_pad_line(),line)
         else:
             for line in self.marked_target_lst:
+                # back_up alias
+                back_up=None
+                if line.get_label() in line.next.get_label(): 
+                    back_up=line.next
+                    self.unlink_line(back_up)
                 next_line = line.next
                 self.unlink_line(line)
+
                 # update section_align
                 section_name=line.section_declaration.get_bare_section()
                 if section_name in self.section_align.keys():
                     self.section_align[section_name]=max(self.section_align[section_name], line.slots_info.get_max_align())
                 else:
                     self.section_align[section_name] = line.slots_info.get_max_align() 
+                
+                # instrument
                 self.insert_lines_before(
                     line.slots_info.build_prefix_line_and_label(line), next_line)
+                
+                # restore alias
+                if back_up: self.insert_after(back_up,line)
 
-    def code_instrument(self,debug=False):
+    def code_instrument(self,debug=False,skip_lib=False):
         self.target_instrument()
         if len(self.both_valid_tag) <= 1:
             return
-        self.branch_instrument(debug=debug)
+        self.branch_instrument(debug=debug,skip_lib=skip_lib)
 
-    def scfi_all(self, orthogonal=True, max_slot_length=8,debug=False):
+    def scfi_all(self, orthogonal=True, max_slot_length=8,debug=False,skip_lib=False):
         '''Paper version: branch with only one identifier, branch may has multiple.
         Only padding, not trampoline.'''
 
@@ -1392,7 +1416,7 @@ class SCFIAsm(AsmSrc):
         self.colored_IDs()
         self.huffman_after_coloring(
             orthogonal=orthogonal, max_length=max_slot_length)
-        self.code_instrument(debug=debug)
+        self.code_instrument(debug=debug, skip_lib=skip_lib)
         # if self.max_color:
         #     self.add_ID_fail()
         self.new_lds()

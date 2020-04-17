@@ -104,7 +104,7 @@ def run_new():
     spec.clear_err_file()
     spec.link(object_name='./scfi_tmp.o',
               output_name='./scfi_tmp', lds='./scfi_tmp.lds')
-    spec.run_cycle(size='ref', filelst=['./vtable','./scfi_tmp'],n=4)
+    spec.run_cycle(size='ref', filelst=['./vtable','./scfi_tmp'],n=11)
     # time.sleep(5)
     spec.list_err_file()
 
@@ -123,6 +123,14 @@ def prepare_cfg():
 def readcfg():
     CFG.read_from_llvm_pass('/home/readm/scfi/workload/483.xalancbmk/work/scfi_tmp.cfg')
 
+def size():
+    spec_path = '/home/readm/SPEC2006'
+    work_path = '/home/readm/scfi/workload/'
+    log_path = '/home/readm/scfi/log'
+    version = 2006  # or 2000, 2017 if needed
+    spec = runspec.PYSPEC(spec_path, work_path, log_path, version)
+    spec.work_lst = work_lst
+    print(spec.get_exe_code_size('vtable'))
 
 logger = logging.getLogger('SCFI')
 logger.setLevel(logging.INFO)
@@ -130,7 +138,28 @@ logger0 = logging.getLogger('PYSPEC')
 logger0.setLevel(logging.DEBUG)
 
 
-work_lst = ["433.milc", "471.omnetpp", "473.astar"]
+def apache():
+    target_bin_name='httpd'
+    os.chdir('/home/readm/apache/httpd-2.4.43')
+    #subprocess.run('/usr/local/bin/llc --thread-model=posix *.precodegen.bc -o '+target_bin_name+'.s', shell=True)
+    asm = SCFIAsm.read_file(target_bin_name+'.s',src_path='/home/readm/apache/httpd-2.4.43/')
+    asm.tmp_asm_path = 'scfi_tmp.s'
+    asm.tmp_obj_path = 'scfi_tmp.o'
+    asm.tmp_dmp_path = 'scfi_tmp.dump'
+    asm.tmp_lds_path = 'scfi_tmp.lds'
+    asm.move_file_directives_forward()
+    asm.mark_all_instructions(cfg=CFG.read_from_llvm_pass('scfi_tmp.cfg'))
+    asm.scfi_all(max_slot_length=6,skip_lib=True)
+    #asm.compile_tmp()
+    subprocess.run('gcc %s.s -o %s.o -g -c' %('scfi_tmp', 'scfi_tmp'), shell=True)
+    subprocess.run('clang -O2 -pthread -flto -o httpd scfi_tmp.o -Wl,--export-dynamic,-T,scfi_tmp.lds server/.libs/libmain.a modules/core/.libs/libmod_so.a modules/http/.libs/libmod_http.a server/mpm/event/.libs/libevent.a os/unix/.libs/libos.a -L/usr/local/lib /usr/local/lib/libpcre.so /usr/lib/x86_64-linux-gnu/libaprutil-1.so /usr/lib/x86_64-linux-gnu/libapr-1.so -g', shell=True)
+apache()
+exit()
+
+work_lst = ["464.h264ref"]#, "401.bzip2", "403.gcc", "429.mcf", "445.gobmk", "456.hmmer","458.sjeng", "462.libquantum", "464.h264ref","433.milc", "471.omnetpp", "473.astar"]
+
+
+# size()
 
 # readcfg()
 # exit()
