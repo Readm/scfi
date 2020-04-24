@@ -82,7 +82,7 @@ class Line(str):
         return super().__str__()
 
     def strip_comment(self):
-        return self.split(global_env.comment_character)[0]
+        return self.split(global_env.comment_character)[0].strip()
 
     def get_opcode(self):
         if self.is_instruction:

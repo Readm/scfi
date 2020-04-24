@@ -7,3 +7,5 @@ workload.tar.gz
 spec_cmd_cache/*
 !spec_cmd_cache/.gitkeep
 wrapper/runlog
+!workload/*/work/scfi
+!workload/*/work/baseline

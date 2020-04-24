@@ -193,7 +193,7 @@ class PYSPEC():
                 return cmd
         raise Exception('No SPEC_CMD found for %s' % name)
 
-    def lto_compile(self, c_lst=None, asm_file_name='tmp.s', add_args=" -w", save_bc_file=None):
+    def lto_compile(self, c_lst=None, asm_file_name='tmp.s', add_args=" -w", save_bc_file=None, build_object=True, build_final=True):
         if c_lst == None:
             c_lst = self.work_lst
 
@@ -202,27 +202,33 @@ class PYSPEC():
             os.chdir(os.path.join(self.work_path, benchmark, 'work'))
             os.system('cp -r ../src/* ./')
 
-            for c in tqdm(cmd[:-1]):
-                if c.strip():
-                    logger.debug(c)
-                    p = subprocess.Popen(
-                        c+add_args, stdout=subprocess.PIPE, shell=True)
-                    p.wait()
-
-            c = cmd[-1] + ' -save-temps -Wl,-plugin-opt=save-temps'
-            logger.debug(c)
-            p = subprocess.Popen(c, stdout=subprocess.PIPE, shell=True)
-            p.wait()
-
-            if save_bc_file:
-                c = "cp *.precodegen.bc "+save_bc_file
+            if build_object:
+                for c in tqdm(cmd[:-1]):
+                    if c.strip():
+                        logger.debug(c)
+                        p = subprocess.Popen(
+                            c+add_args, stdout=subprocess.PIPE, shell=True)
+                        p.wait()
+            if build_final:
+                args=cmd[-1].split()
+                index=args.index('-o')+1
+                args[index]=asm_file_name
+                new_cmd = ' '.join(args)
+                c = cmd[-1]+ ' -save-temps -Wl,-plugin-opt=save-temps'
+                # c = new_cmd + ' -Wl,-plugin-opt=emit-asm'
                 logger.debug(c)
                 p = subprocess.Popen(c, stdout=subprocess.PIPE, shell=True)
                 p.wait()
-            c = "/usr/local/bin/llc *.precodegen.bc -o " + asm_file_name
-            logger.debug(c)
-            p = subprocess.Popen(c, stdout=subprocess.PIPE, shell=True)
-            p.wait()
+
+                if save_bc_file:
+                    c = "cp *.precodegen.bc "+save_bc_file
+                    logger.debug(c)
+                    p = subprocess.Popen(c, stdout=subprocess.PIPE, shell=True)
+                    p.wait()
+                c = "/usr/local/bin/llc *.precodegen.bc -o " + asm_file_name
+                logger.debug(c)
+                p = subprocess.Popen(c, stdout=subprocess.PIPE, shell=True)
+                p.wait()
 
     def benchmark_is_cpp(self, benchmark):
         if self.version == 2006:
@@ -244,7 +250,7 @@ class PYSPEC():
         if lk_lst == None:
             lk_lst = self.work_lst
         if lds:  # has a ld script
-            lds_arg = ' -T %s' % lds
+            lds_arg = ' "-T" "%s"' % lds
         else:
             lds_arg = ''
         for benchmark in lk_lst:

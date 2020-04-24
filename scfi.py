@@ -4,6 +4,7 @@ import subprocess
 
 
 from asmplayground import *
+from cfg import *
 import os
 
 
@@ -111,7 +112,7 @@ class ToolKit():
                         slot_line = Line('\tmov\t$0x0, %r11b')
                         setattr(slot_line, 'reserved_tags', line.tags)
                     else:
-                        slot_line = Line('\tmov\t$%s, %%r11b' % hex(slot[0]))
+                        slot_line = Line('\tmov\t$%s, %%r11b' % hex(slots[0]))
                         # setattr(slot_line, 'slot', slot)
                     lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
                     lines.append(slot_line)
@@ -182,202 +183,6 @@ class IDLine(Line):
         return cls('\t.byte\t'+s[:-2]+'\t# scfi_tmp IDs')
 
 
-class CFG():
-    '''Label based CFG, each target/branch has tags(labels)
-    Tags can be strings, int ...
-    For each target: keyed by label
-    For each branch: keyed by debug_loc
-    Remember to add new read function for new formats'''
-
-    def __init__(self, target=dict(), branch=dict()):
-        self.target = target  # label-> [tags]
-        self.branch = branch  # debug loc -> [tags]
-        # remember: the tags is in a list, we support multi tags
-
-    @classmethod
-    def read_from_llvm_fastcfi(cls, path):
-        with open(path) as f:
-            target, branch = dict(), dict()
-            for line in f:
-                line = line.strip()
-                if line.startswith('FastCFI:callee'):
-                    info = line.replace('FastCFI:callee=', '').split('@')
-                    target[info[0]] = [info[-1]]
-                elif line.startswith('FastCFI:caller'):
-                    info = line.replace('FastCFI:caller=', '').split('@')
-                    branch[info[0]] = [info[-1]]
-            valid_tags = branch.values()
-            for key in [k for k in target.keys()]:
-                if target[key] not in valid_tags:
-                    target.pop(key)
-            return cls(target=target, branch=branch)
-
-    @classmethod
-    def read_from_llvm_pass(cls, path, ignore_class_name=False):
-        def class_strip(s):
-            import re
-
-            #strip class/struct number
-            pattern = re.compile(r"class\.[^:]+::[^\.]+\.[\d.]+")
-            lst = re.findall(pattern, s)
-            for _type in lst:
-                pattern = re.compile(r"class\.[^:]+::[^\.]+")
-                new_type = re.match(pattern, _type).group()
-                s = s.replace(_type, new_type)
-
-            pattern = re.compile(r"struct\.[\w]+\.[\d.]+")
-            lst = re.findall(pattern, s)
-            for _type in lst:
-                pattern = re.compile(r"struct\.[\w]+")
-                new_type = re.match(pattern, _type).group()
-                s = s.replace(_type, new_type)
-            return s
-        
-        union_set=[]
-        if os.path.exists(os.path.join(os.path.split(path)[0],'scfi_tmp.union')):
-            with open(os.path.join(os.path.split(path)[0],'scfi_tmp.union')) as f:
-                union_l = []
-                for line in f:
-                    if not line.startswith('(end)'):
-                        union_l.append(line.strip())
-                    else:
-                        union_set.append(union_l)
-                        union_l=[]
-
-
-        with open(path) as f:
-            target, branch = dict(), dict()
-            # first read the cfg in type
-            virtual_branch = dict()
-            virtual_target = dict()
-            pointer_branch = dict()
-            pointer_target = dict()
-
-            _type = ""
-            items = set()
-            current_set = None  # empty
-            for line in f:
-                if line.startswith('#'): continue # white list
-                if line.startswith('Virtual Function Branches:'):
-                    current_set = virtual_branch
-                    continue
-                if line.startswith('Virtual Function Targets:'):
-                    current_set = virtual_target
-                    continue
-                if line.startswith('Function Pointer Branches:'):
-                    current_set = pointer_branch
-                    continue
-                if line.startswith('Function Pointer Targets:'):
-                    current_set = pointer_target
-                    continue
-                if line.startswith('Function Pointer CFG:'):
-                    current_set = None
-                    continue
-
-                if current_set == None:
-                    continue
-                if line.startswith('Type:'):
-                    _type = class_strip(line.strip()[6:])
-                    for union_lst in union_set:
-                        if _type in union_lst:
-                            _type=union_lst[0]
-                    # print(_type)
-                    continue
-                try:
-                    current_set[_type].add(line.strip())
-                except KeyError:
-                    current_set[_type] = set([line.strip()])
-
-            # remove items in pointer_* if in virtual_*
-            rm_lst = []
-            for key in pointer_branch.keys():
-                if key in virtual_branch.keys():
-                    rm_lst.append(key)
-            for key in rm_lst:
-                del pointer_branch[key]
-            rm_lst = []
-            for key in pointer_target.keys():
-                if key in virtual_target.keys():
-                    rm_lst.append(key)
-            for key in rm_lst:
-                del pointer_target[key]
-
-            tmp_branch = dict()
-            for key in virtual_branch.keys():
-                for item in virtual_branch[key]:
-                    try:
-                        tmp_branch[item].add(key)
-                    except KeyError:
-                        tmp_branch[item] = set([key])
-            for key in pointer_branch.keys():
-                for item in pointer_branch[key]:
-                    try:
-                        tmp_branch[item].add(key)
-                    except KeyError:
-                        tmp_branch[item] = set([key])
-
-            # merge multi type of branchs
-            merge_type = dict()  # from type to a merge number
-            merge_type_count = 0
-            for item in tmp_branch.keys():
-                if len(tmp_branch[item]) == 1:
-                    continue
-                new_type_lst = []
-                for _type in tmp_branch[item]:
-                    # map to new type recursely
-                    new_type = _type
-                    while new_type in merge_type.keys():
-                        new_type = merge_type[new_type]
-                    new_type_lst.append(new_type)
-                new_merge_type = 'Merged_type_%d' % merge_type_count
-                merge_type_count += 1
-                for new_type in new_type_lst:
-                    merge_type[new_type] = new_merge_type
-                tmp_branch[item] = set([new_merge_type])
-
-            target, branch = dict(), dict()
-            for br_set in [virtual_branch, pointer_branch]:
-                for key in br_set.keys():
-                    new_type = key
-                    while new_type in merge_type.keys():
-                        new_type = merge_type[new_type]
-                    for item in br_set[key]:
-                        try:
-                            branch[item].add(new_type)
-                            if len(branch[item]) > 1:
-                                logger.warn(
-                                    'Multi-tag branch found: %s' % item)
-                        except KeyError:
-                            branch[item] = set([new_type])
-            for tg_set in [virtual_target, pointer_target]:
-                for key in tg_set.keys():
-                    new_type = key
-                    while new_type in merge_type.keys():
-                        new_type = merge_type[new_type]
-                    for item in tg_set[key]:
-                        try:
-                            target[item].add(new_type)
-                            if len(target[item]) > 1:
-                                logger.debug(
-                                    'Multi-tag target found: %d %s' % (len(target[item]), item))
-                        except KeyError:
-                            target[item] = set([new_type])
-            # pprint(branch,width=-1)
-            # pprint(target,width=-1)
-
-        return cls(target, branch)
-
-    def convert_filename_to_number(self, file_numbers):
-        '''convert the string:y:z to x y z form'''
-        for branch_loc in [k for k in self.branch.keys()]:
-            try:
-                new_key = str(file_numbers[branch_loc.split(':')[0]])
-                new_key += ' '+' '.join(branch_loc.split(':')[1:3])
-                self.branch[new_key] = self.branch[branch_loc]
-                self.branch.pop(branch_loc)
-            except KeyError:  # some branches in CFG do not appera in assemble file
-                continue
-
 
 class SLOT_INFO():
     def __init__(self, value, width, is_traditional):
@@ -427,38 +232,34 @@ class SLOT_INFO():
                     call_expr = tk.get_call_expr(branch_line)
                     slot_mask = 0xffffffffffffffff ^ ((1 << self.width)-1)
                     if debug:
-                        lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
+                        tmp_reg = '%r10' if ('r11' in call_expr) else '%r11'
+                        lines.append(Line('\tmovq\t%s, %s' % (call_expr,tmp_reg)))
                         # todo the offset 14 is not correct
                         # if skip_lib:
                         #     lines.append(Line('\tcmp\t $0xFFFFFFFF, %r11'))
                         #     lines.append(Line('\tjle\t.+14'))
                         # reserve slot
                         slot_clear_line = Line(
-                            '\tand\t$%s, %%r11' % hex((1 << self.width)-1))
+                            '\tand\t$%s, %s' % (hex((1 << self.width)-1),tmp_reg))
                         lines.append(slot_clear_line)
-                        lines.append(Line('\tcmp\t $%s, %%r11' % self.value))
+                        lines.append(Line('\tcmp\t $%s, %s' % (self.value,tmp_reg)))
                         lines.append(Line('\tje\t.+3'))
                         lines.append(Line('\tint3'))
                         # lines.append(Line('\tud2'))
                         lines.append(Line('\tcallq *%s\t\t# scfi_call slot debug' % call_expr))
                     else:
                         slot_mask = 0xffffffffffffffff ^ ((1 << self.width)-1)
-                        slot_clear_line = Line(
-                            '\tand\t$%s, %%r11' % hex(slot_mask))
-                        slot_write_line = Line(
-                            '\tor\t$%s, %%r11' % hex(self.value))
-                        lines.append(Line('\tmovq\t%s, %%r11' % call_expr))
+                        tmp_reg = '%r11'
+                        if False:#'(' not in call_expr:
+                            tmp_reg = call_expr
+                        else:
+                            lines.append(Line('\tmovq\t%s, %s' % (call_expr,tmp_reg)))
                         if skip_lib:
-                            if debug: # debug
-                                lines.append(Line('\tcmpq\t $0xFFFFFFF,  %r11' ))
-                                lines.append(Line('\tjle\t.+3'))
-                                lines.append(Line('\tint3'))
-                            else:
-                                lines.append(Line('\tcmpq\t $0xFFFFFFF,  %r11' ))
+                                lines.append(Line('\tcmpq\t $0xFFFFFFF,  %s' % tmp_reg))
                                 lines.append(Line('\tjge\t.+10'))
-                        lines.append(slot_clear_line)
-                        lines.append(slot_write_line)
-                        lines.append(Line('\tcallq \t*%r11\t# scfi_call slot'))
+                        lines.append(Line('\tand\t$%s, %s' % (hex(slot_mask),tmp_reg)))
+                        lines.append(Line('\tor\t$%s, %s' % (hex(self.value),tmp_reg)))
+                        lines.append(Line('\tcallq \t*%s\t# scfi_call slot' % tmp_reg))
                     return lines
             raise Exception('Unsupported syntax or ISA')
 
@@ -613,7 +414,7 @@ class SCFIAsm(AsmSrc):
                         self.tag_count[tag] = 1
 
     def tag_target_count(self, tag):
-        return len(self.tag_target)
+        return len(self.tag_target[tag])
 
     def mark_all_targets(self):
         for line in self.label_list:
@@ -1196,15 +997,20 @@ class SCFIAsm(AsmSrc):
             return 0
         return max(self.tag_color.values())  # requires coloring first
 
-    def coloring(self):
+    # TODO: branch number sort
+    def coloring(self, runtime_first=True):
         '''Coloring: 0 stands for slot, 1,2,3 for IDs'''
         self.tag_color = dict()
         for tag in self.both_valid_tag:
             self.tag_color[tag] = 0
         current_max_color = 0
 
+        if runtime_first:
+            lambda_sort= lambda x: self.tag_branch_count[tag]
+        else:
+            lambda_sort= lambda x: self.tag_target_count(tag)
         sorted_lst = sorted([tag for tag in self.both_valid_tag],
-                            key=lambda x: self.tag_target_count(tag), reverse=True)
+                            key=lambda_sort, reverse=True)
 
         while True:
             this_round_changed = False
@@ -1212,7 +1018,7 @@ class SCFIAsm(AsmSrc):
                 for target in self.tag_target[tag]:
                     if len(target.tags) > 1:
                         sorted_tags = sorted(
-                            [tag for tag in target.tags], key=lambda x: self.tag_target_count(tag))
+                            [tag for tag in target.tags], key=lambda_sort)
                         color_set = set()
                         for t in sorted_tags:
                             if self.tag_color[t] not in color_set:
@@ -1248,7 +1054,7 @@ class SCFIAsm(AsmSrc):
                     self.tag_id[tag] = 0
                     current_ID_of_color[color] = 1
 
-    def huffman_after_coloring(self, orthogonal=True, max_length=6):
+    def huffman_after_coloring(self, orthogonal=True, max_length=6, runtime_first=True):
         '''After Coloring, use huffman coding encode the color 0 (slots)
         If the max_length of coding > max_length, make a new color for them.
         After this, each marked branch has a "slot_info",each marked target has a "slots_info"'''
@@ -1279,8 +1085,12 @@ class SCFIAsm(AsmSrc):
         if max([len(x) for x in code.values()]) > max_length:
             current_ID = 0
             first_color = self.max_color+1
-            sorted_lst = sorted([t for t in self.both_valid_tag if self.tag_color[t]==0],
-                                key=lambda x: self.tag_target_count(x), reverse=True)
+            if not runtime_first:
+                sorted_lst = sorted([t for t in self.both_valid_tag if self.tag_color[t]==0],
+                                    key=lambda x: self.tag_target_count(x), reverse=True)
+            else:
+                sorted_lst = sorted([t for t in self.both_valid_tag if self.tag_color[t]==0],
+                                    key=lambda x: self.tag_branch_count[x], reverse=True)
             while True:
                 for _ in range(len(sorted_lst)//4):
                     tag = sorted_lst.pop()
@@ -1403,22 +1213,26 @@ class SCFIAsm(AsmSrc):
             return
         self.branch_instrument(debug=debug,skip_lib=skip_lib)
 
-    def scfi_all(self, orthogonal=True, max_slot_length=8,debug=False,skip_lib=False):
+    def scfi_all(self, orthogonal=True, max_slot_length=8,debug=False,skip_lib=False,runtime_first=True):
         '''Paper version: branch with only one identifier, branch may has multiple.
-        Only padding, not trampoline.'''
+        Only padding, not trampoline.
+        :param orthogonal: Generate orthogonal identifiers
+        :param max_slot_length: Max huffman code length, if exceed, use ID policy for some slot.
+        :param debug: Generate debug asm.
+        :param skip_lib: Generate asm that skip the high memory space.
+        :param runtime_first: Runtime first (more branches use slot) or Code Size first (more target use slot).
+        '''
 
         # prepare, after read cfg
 
         self.try_convert_indirect()
         self.cut_one_side_tags()
         self.remove_single_edge()
-        self.coloring()
+        self.coloring(runtime_first=runtime_first)
         self.colored_IDs()
         self.huffman_after_coloring(
             orthogonal=orthogonal, max_length=max_slot_length)
         self.code_instrument(debug=debug, skip_lib=skip_lib)
-        # if self.max_color:
-        #     self.add_ID_fail()
         self.new_lds()
         self.compile_tmp()
     
@@ -1428,15 +1242,24 @@ class SCFIAsm(AsmSrc):
             f.write('Log for %s:\n'% self.tmp_asm_path)
             f.write('Total icalls number: %d\n'  % len(self.branch_lst))
             f.write('Marked icalls: %d\n' % len(self.marked_branch_lst))
-            f.write('Marked targets: %d\n' % len(self.marked_branch_lst))
+            f.write('Marked targets: %d\n' % len(self.marked_target_lst))
             f.write('Valid tags: %d\n' % len(self.both_valid_tag))
             f.write('Coloring (by tag):' +
                     str(collections.Counter([self.tag_color[v] for v in self.both_valid_tag]))+'\n')
+            
+            max_identifier=0
             lst = []
             for t in self.marked_target_lst:
+                max_identifier = max(max_identifier, len(t.tags))
                 for tag in t.tags:
                     lst.append(self.tag_color[tag])
-            f.write('Coloring (by target):' + str(collections.Counter(lst)))
+            f.write('Coloring (by target):' + str(collections.Counter(lst))+'\n')
+            lst = []
+            for t in self.marked_branch_lst:
+                for tag in t.tags:
+                    lst.append(self.tag_color[tag])
+            f.write('Coloring (by branch):' + str(collections.Counter(lst))+'\n')
+            f.write('Max multi-tag target # tag: %d' % max_identifier+'\n')
 
     def try_convert_indirect(self):
         for branch in [b for b in self.marked_branch_lst]:
