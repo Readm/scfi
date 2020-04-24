@@ -61,7 +61,9 @@ def build_scfi(debug=False):
         src_path = '/home/readm/scfi/workload/%s/work/' % name
         work_path = src_path.replace('fast-cfi', 'scfi')
         cfg_path = '/home/readm/scfi/workload/%s/work/scfi_tmp.cfg' % name
-        cfg=CFG.read_from_llvm_pass(cfg_path,inherit_path='/home/readm/scfi/workload/%s/doxygen/html/'%name, to_object=True)
+        #cfg=CFG.read_from_llvm_pass(cfg_path,inherit_path='/home/readm/scfi/workload/%s/doxygen/html/'%name,to_object=True)
+        #cfg.dump('/home/readm/scfi/workload/%s/work/scfi_tmp.cfgdump' % name)
+        cfg=CFG.load(cfg_path+'dump')
         asm = SCFIAsm.read_file(filePath, src_path=src_path)
         asm.tmp_asm_path = work_path+'scfi_tmp.s'
         asm.tmp_obj_path = work_path+'scfi_tmp.o'
@@ -164,11 +166,11 @@ def apache():
     subprocess.run('gcc %s.s -o %s.o -g -c' %('scfi_tmp', 'scfi_tmp'), shell=True)
     subprocess.run('clang -O2 -pthread -flto -o httpd scfi_tmp.o -Wl,--export-dynamic,-T,scfi_tmp.lds server/.libs/libmain.a modules/core/.libs/libmod_so.a modules/http/.libs/libmod_http.a server/mpm/event/.libs/libevent.a os/unix/.libs/libos.a -L/usr/local/lib /usr/local/lib/libpcre.so /usr/lib/x86_64-linux-gnu/libaprutil-1.so /usr/lib/x86_64-linux-gnu/libapr-1.so -g', shell=True)
 
-#work_lst = ["471.omnetpp","456.hmmer", "458.sjeng", "464.h264ref", "433.milc"]
-work_lst = ["471.omnetpp"]
-lto_compile()
-prepare_cfg()
-build_scfi(debug=False)
-run_new(l=['./scfi_tmp'],n=1,link=True)
-#run_new(l=['./baseline','./scfi'],n=11,link=False)
+work_lst = ["464.h264ref", "433.milc", "473.astar"]
+#work_lst = ["483.xalancbmk"]
+#lto_compile()
+#prepare_cfg()
+#build_scfi(debug=True)
+#run_new(l=['./scfi_tmp'],n=1,link=True)
+run_new(l=['./baseline','./scfi'],n=11,link=False)
 exit()

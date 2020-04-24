@@ -285,3 +285,13 @@ class CFG():
             except KeyError:  # some branches in CFG do not appera in assemble file
                 continue
 
+    def dump(self,path):
+        import pickle
+        with open(path,'wb+') as f:
+            pickle.dump(self,f)
+    
+    @classmethod
+    def load(cls,path):
+        import pickle
+        with open(path,'rb') as f:
+            return pickle.load(f)
