@@ -4,7 +4,7 @@ import logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('SCFI')
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 
@@ -69,7 +69,7 @@ class CFG():
     @classmethod
     def read_from_llvm_pass(cls, path, ignore_class_name=False, union_file='scfi_tmp.union', inherit_path='', virtual_inherit=False, only_virtual=False, to_object=False):
         import re
-
+        logger.info('Read CFG from llvm pass: virtual_inherit:%s only_virtual:%s to_object:%s' %(str(virtual_inherit), str(only_virtual), str(to_object)))
         inherit_graph=dict()
         if inherit_path:
             inherit_graph = InheritGraph(inherit_path)
@@ -94,7 +94,7 @@ class CFG():
             token_lst = pattern.findall(s)
             for token in token_lst:
                 if token in inherit_graph.keys() and inherit_graph[token]!= 'cObject':
-                    tmp_pattern =  re.compile('\b%s\b'%token)
+                    tmp_pattern =  re.compile(r'\b%s\b'%token)
                     new_str = get_top_parent(token)
                     s=tmp_pattern.sub(new_str,s)
             return s
@@ -198,14 +198,12 @@ class CFG():
                 inherit_lst.append(virtual_branch)
             for _set in inherit_lst:
                 rm_lst = []
-                for key in _set.keys():
+                for key in [k for k in _set.keys()]:
                     if key != class_to_top(key):
-                        print(len(inherit_graph), key,'->', class_to_top(key))
                         rm_lst.append(key)
                         _set[class_to_top(key)]=_set[key]
                 for key in rm_lst:
                     del _set[key]
-
 
             tmp_branch = dict()
             for key in virtual_branch.keys():
