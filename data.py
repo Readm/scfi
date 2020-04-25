@@ -1,7 +1,7 @@
 path='/home/readm/scfi/log'
 output=''
 
-with open(path+'/run.log') as f:
+with open(path+'/result_run.log') as f:
     data=[]
     names=[]
     filenames=[]

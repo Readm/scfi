@@ -168,17 +168,17 @@ def apache():
     subprocess.run('gcc %s.s -o %s.o -g -c' %('scfi_tmp', 'scfi_tmp'), shell=True)
     subprocess.run('clang -O2 -pthread -flto -o httpd scfi_tmp.o -Wl,--export-dynamic,-T,scfi_tmp.lds server/.libs/libmain.a modules/core/.libs/libmod_so.a modules/http/.libs/libmod_http.a server/mpm/event/.libs/libevent.a os/unix/.libs/libos.a -L/usr/local/lib /usr/local/lib/libpcre.so /usr/lib/x86_64-linux-gnu/libaprutil-1.so /usr/lib/x86_64-linux-gnu/libapr-1.so -g', shell=True)
 
-#work_lst = ["464.h264ref", "433.milc", "473.astar"]
+work_lst = ["473.astar", "483.xalancbmk", "444.namd"]
 # work_lst = ['400.perlbench', '401.bzip2', '445.gobmk', '456.hmmer', '458.sjeng', '464.h264ref', '433.milc', '473.astar', '444.namd', '403.gcc',  '471.omnetpp', '483.xalancbmk']
 #logger.setLevel(logging.DEBUG)
-work_lst=["483.xalancbmk"]
+# work_lst=["483.xalancbmk"]
 #exit()
 # lto_compile()
 # prepare_cfg()
 # exit()
 # build_scfi(dump_cfg=True)
-build_scfi(debug=False)
-run_new(l=['./scfi_tmp'],n=1,link=True)
-size()
-#run_new(l=['./baseline','./scfi'],n=11,link=False)
+# build_scfi(debug=False)
+# run_new(l=['./scfi_tmp'],n=1,link=True)
+# size()
+run_new(l=['./baseline','./scfi'],n=11,link=False)
 exit()
