@@ -408,33 +408,34 @@ Document Path:          /50M.b
 Document Length:        52428800 bytes
 
 Concurrency Level:      10
-Time taken for tests:   15.822 seconds
+Time taken for tests:   13.629 seconds
 Complete requests:      1000
 Failed requests:        0
 Total transferred:      52429030000 bytes
 HTML transferred:       52428800000 bytes
-Requests per second:    63.20 [#/sec] (mean)
-Time per request:       158.218 [ms] (mean)
-Time per request:       15.822 [ms] (mean, across all concurrent requests)
-Transfer rate:          3236047.02 [Kbytes/sec] received
+Requests per second:    73.37 [#/sec] (mean)
+Time per request:       136.291 [ms] (mean)
+Time per request:       13.629 [ms] (mean, across all concurrent requests)
+Transfer rate:          3756688.88 [Kbytes/sec] received
 
 Connection Times (ms)
               min  mean[+/-sd] median   max
 Connect:        0    0   0.0      0       0
-Processing:   118  158  24.1    170     186
-Waiting:        0    0   0.4      0      12
-Total:        118  158  24.1    170     186
+Processing:   102  136   2.6    136     158
+Waiting:        0    0   0.6      0       7
+Total:        102  136   2.6    136     158
 
 Percentage of the requests served within a certain time (ms)
-  50%    170
-  66%    182
-  75%    182
-  80%    182
-  90%    183
-  95%    184
-  98%    185
-  99%    185
- 100%    186 (longest request)
+  50%    136
+  66%    137
+  75%    137
+  80%    137
+  90%    138
+  95%    139
+  98%    140
+  99%    143
+ 100%    158 (longest request)
+
 readm@readm-Laptop:~$ ab  -c 10 -n 1000 http://127.0.0.1/100M.b
 This is ApacheBench, Version 2.3 <$Revision: 1706008 $>
 Copyright 1996 Adam Twiss, Zeus Technology Ltd, http://www.zeustech.net/
@@ -979,7 +980,7 @@ Percentage of the requests served within a certain time (ms)
   98%     30
   99%     31
  100%     55 (longest request)
-readm@readm-Laptop:~$ ab  -c 10 -n 1000 http://127.0.0.1/50M.b
+ab  -c 10 -n 1000 http://127.0.0.1/50M.b
 This is ApacheBench, Version 2.3 <$Revision: 1706008 $>
 Copyright 1996 Adam Twiss, Zeus Technology Ltd, http://www.zeustech.net/
 Licensed to The Apache Software Foundation, http://www.apache.org/
@@ -1006,33 +1007,33 @@ Document Path:          /50M.b
 Document Length:        52428800 bytes
 
 Concurrency Level:      10
-Time taken for tests:   13.730 seconds
+Time taken for tests:   13.401 seconds
 Complete requests:      1000
 Failed requests:        0
 Total transferred:      52429030000 bytes
 HTML transferred:       52428800000 bytes
-Requests per second:    72.83 [#/sec] (mean)
-Time per request:       137.298 [ms] (mean)
-Time per request:       13.730 [ms] (mean, across all concurrent requests)
-Transfer rate:          3729140.91 [Kbytes/sec] received
+Requests per second:    74.62 [#/sec] (mean)
+Time per request:       134.010 [ms] (mean)
+Time per request:       13.401 [ms] (mean, across all concurrent requests)
+Transfer rate:          3820632.01 [Kbytes/sec] received
 
 Connection Times (ms)
               min  mean[+/-sd] median   max
-Connect:        0    0   0.2      0       2
-Processing:   120  137   2.5    137     159
-Waiting:        0    0   1.2      0      28
-Total:        120  137   2.5    137     161
+Connect:        0    0   0.0      0       0
+Processing:   113  134   1.7    134     146
+Waiting:        0    0   0.6      0       7
+Total:        113  134   1.7    134     146
 
 Percentage of the requests served within a certain time (ms)
-  50%    137
-  66%    138
-  75%    138
-  80%    139
-  90%    139
-  95%    140
-  98%    140
-  99%    142
- 100%    161 (longest request)
+  50%    134
+  66%    134
+  75%    135
+  80%    135
+  90%    135
+  95%    136
+  98%    137
+  99%    138
+ 100%    146 (longest request)
 readm@readm-Laptop:~$ ab  -c 10 -n 1000 http://127.0.0.1/100M.b
 This is ApacheBench, Version 2.3 <$Revision: 1706008 $>
 Copyright 1996 Adam Twiss, Zeus Technology Ltd, http://www.zeustech.net/
