@@ -361,6 +361,12 @@ class SLOTS_INFO():
 
 
 class SCFIAsm(AsmSrc):
+    '''SCFI Asm object:
+    All valid branches and target are identified by tags (CFG label)
+    if one instruction is marked, it has a tag, which is a list of the tags.
+    each tag can be mapped to a slot via self.tag_slot
+    '''
+
     def __init__(self, s, cfg=CFG(), src_path=''):
         super().__init__(s)
         self.cfg = cfg
@@ -547,417 +553,25 @@ class SCFIAsm(AsmSrc):
             self.update_tmp_label_addresses()
         logger.info('Finish compile.')
 
-    def function_hold_address(self, address):
-        '''return the function name the address in'''
-        for function in self.label_size.keys():  # only functions have size
-            if self.label_address[function] <= address and self.label_address[function]+self.label_size[function] >= address:
-                return function
-        return None
-
-    def mark_function_basic_blocks(self, function_name):
-        '''mark all basic blocks in a function, return all tmp labels'''
-        lines = self.get_function_lines(function_name)
-        tmp_labels = []
-        for line in lines:
-            if self.toolkit.is_control_transfer(line):
-                tmp_label = Line(self.toolkit.get_tmp_label()+':')
-                self.insert_after(tmp_label, line)
-                tmp_labels.append(tmp_label)
-        return tmp_labels
-
-    def mark_all_basic_blocks(self):
-        tmp_labels = []
-        for line in self.traverse_lines():
-            if self.toolkit.is_control_transfer(line):
-                tmp_label = Line(self.toolkit.get_tmp_label()+':')
-                self.insert_after(tmp_label, line)
-                tmp_labels.append(tmp_label)
-        self.basic_block_labels = tmp_labels
-
-    def build_target_trampo(self, ori_line, padding_line):
-        '''used in "insert" moving
-        mark several lines as "pinned_trampo", insert them into codes, and modify the original label
-        they will "float" in the code, but always "pin" in the address
-        a normal form:
-        SCFIIBtarget:
-            jump trampo_end
-            .org (padding to ...)
-        target:
-            landding_pad
-            jump .Rtarget
-        SCFIIEtarget:'''
-        label = ori_line.get_label()
-        modified_label = '.scfi_real_'+label
-        ori_line.set_str(ori_line.replace(label, modified_label))
-
-        lines = []
-        lines.append(Line('.scfi_ib_%s:' % label))
-        lines.append(Line('\tjmp\t.scfi_ie_%s' % label))
-        lines.append(padding_line)
-        l = Line('%s:' % label)
-        setattr(l, 'ori_label_line', True)
-        lines.append(l)
-        lines.append(self.toolkit.get_landing_pad_line())
-        lines.append(Line('\tjmp\t%s' % modified_label))
-        lines.append(Line('.scfi_ie_%s:' % label))
-
-        setattr(lines[0], 'trampo_label', label)
-        setattr(lines[0], 'trampo_end', lines[-1])
-        setattr(lines[0], 'padding_line', padding_line)
-
-        # fix .size
-        for line in self.traverse_from(ori_line):
-            if line.is_directive:
-                if '.size' == line.get_directive_type():
-                    line.set_str(line.replace(label, modified_label))
-                    break
-
-        for line in self.traverse_back_from(ori_line):
-            if line.is_directive:
-                if '.type' == line.get_directive_type():
-                    line.set_str(line.replace(label, modified_label))
-                    break
-
-        for line in lines:
-            setattr(line, 'on_trampo', True)
-        return lines
-
-    def insert_ideal_place(self, target_label, width, slot=None, align_label=''):
-        target_label = '.scfi_real_'+target_label
-        if not (bool(slot != None) ^ bool(align_label)):
-            raise Exception(
-                "Need ONE trampo align target")
-        if align_label:
-            slot = self.read_label_address(
-                align_label) % (1 << width)
-        insert_slot = (slot-self.toolkit.trampo_head) % (1 <<
-                                                         width)
-        ideal_place = self.label_address[target_label] >> width << width
-        ideal_place += insert_slot
-        if ideal_place < self.label_address[target_label]:
-            ideal_place += 1 << width
-        return ideal_place
-
-    def insert_trampo(self, trampo, search_begin, ideal_place, width):
-        '''Insert trampo into a place, first try the ideal_place, from search_begin'''
-        last_label = None
-        for tmp_label in self.basic_block_labels:
-            address = self.label_address[tmp_label.get_label()]
-            if address < search_begin:
-                continue
-            if address > ideal_place:
-                break
-            last_label = tmp_label
-
-        logger.debug('ideal place \t%x' % ideal_place)
-        if not last_label:
-            self.insert_trampo(trampo, search_begin, ideal_place +
-                               (1 << width), width)
-        # or address < self.max_slot_address:
-        elif hasattr(last_label.next, 'on_trampo'):
-            address = self.label_address[last_label.get_label()]
-            self.insert_trampo(trampo, search_begin, ideal_place +
-                               (1 << width), width)
-        else:
-            address = self.label_address[last_label.get_label()]
-            self.max_slot_address = max(self.max_slot_address, address)
-            logger.debug('final place \t%x' % address)
-            # record where it should be
-            setattr(trampo[0], 'placed_address', address)
-            self.insert_lines_after(trampo, last_label)
-
-    # not tested yet
-    def fix_trampo_address(self, trampo):
-        begin_label = trampo[0].get_label()
-        address = self.label_address[begin_label]
-        right_address = trampo[0].placed_address
-        # > (1 << (self.default_fixed_slot_bit_width-1)):  # need fix
-        if address-right_address:
-            logger.debug('Fixing')
-            for line in trampo:
-                if hasattr(line, 'ori_label_line'):
-                    continue
-                self.unlink_line(line)
-            self.compile_tmp(update_label=True)
-            for line in trampo:
-                if not hasattr(line, 'ori_label_line'):
-                    continue
-                self.unlink_line(line)
-            self.insert_trampo(trampo, right_address -
-                               (1 << self.default_fixed_slot_bit_width), address)
-
-    def update_tmp_label_addresses(self):
-        cmd = ['readelf', '-Ws', self.tmp_obj_path]
-        logger.debug(' '.join(cmd))
-        output = subprocess.run(
-            cmd, stdout=subprocess.PIPE).stdout.decode('utf-8')
-        for line in output.split('\n'):
-            try:
-                info = line.split()
-                label = info[-1]
-                address = info[1]
-                size = info[2]
-                _type = info[3]
-            except IndexError:
-                continue
-            if _type == 'FUNC':
-                self.label_address[label] = int(address, 16)
-                self.label_size[label] = int(size, 16 if '0x' in size else 10)
-            if _type == 'NOTYPE':
-                self.label_address[label] = int(address, 16)
-
-    def read_label_address(self, label):
-        return self.label_address[label]
-
-    # abandoned
-    def only_move_targets(self, move_method=PADDING, slot_alloc=FSTMET, optimize_round=0):
-        '''only reorder target, not branches
-        use insert or padding
-        slot_alloc: FSTMET (align to first met), DETERMIN (predetermined)
-        assumptions: targets are all (function) labels
-                    each branch has only one tag
-                    each target has only one tag'''
-        # attributes set:
-        # first_met_tags = first time met a tag, which means use it nature slot
-        # met_tags = tags met already, which means use the slot equals to the first one
-        logger.info('Only_move_targets_nature, move method: %s, slot_alloc: %s' % (
-            move_method, slot_alloc))
-        self.cut_one_side_tags()
-
-        need_move = []
-        need_reprocessing_branches = []  # slot reserved
-        need_reprocessing_targets = []  # slot reserved
-
-        # modify all branches
-        for line in self.marked_branch_lst:
-            prev = line.prev
-            self.unlink_line(line)
-            if slot_alloc == FSTMET:
-                for new_line in self.toolkit.modified_branch(line, type=self.slot_type, reserved=True)[::-1]:
-                    if hasattr(new_line, 'reserved_tags'):
-                        need_reprocessing_branches.append(new_line)
-                    self.insert_after(new_line, prev)
-            elif slot_alloc == DETERMIN:
-                slots = [self.tag_slot[tag][0] for tag in line.tags]
-                if len(slots) > 1:
-                    raise Exception('Not implemented')
-                slot_width = max([self.tag_slot[tag][1] for tag in line.tags])
-                for new_line in self.toolkit.modified_branch(line, type=self.slot_type, reserved=False, slots=slots, slot_width=slot_width)[::-1]:
-                    self.insert_after(new_line, prev)
-            else:
-                raise Exception("Unknown slot allocation.")
-
-        # if use predetermined, we mark all tags allocated
-        if slot_alloc == FSTMET:
-            allocated_tags = set()
-        elif slot_alloc == DETERMIN:
-            allocated_tags = self.valid_target_tags
-
-        for line in self.marked_target_lst:
-            first_met_tags = []
-            met_tags = []
-            for tag in line.tags:
-                if tag not in allocated_tags:
-                    allocated_tags.add(tag)
-                    first_met_tags.append(tag)
-                else:
-                    met_tags.append(tag)
-
-            setattr(line, 'first_met_tags', first_met_tags)
-            setattr(line, 'met_tags', met_tags)
-
-            if not line.met_tags:  # all tags are un-allocated
-                for tag in line.first_met_tags:
-                    landing = self.toolkit.get_landing_pad_line()
-                    setattr(landing, 'reserved_tags', [tag])
-                    need_reprocessing_targets.append(landing)
-                    self.insert_after(landing, line)
-                    self.insert_after(Line('fsttag%s:' % str(tag)), line)
-            else:  # has allocated tag
-                if line.first_met_tags:  # has other un-allocated
-                    raise Exception('Not implemented')
-                elif len(line.met_tags) > 1:  # has multiple allocated tag
-                    raise Exception('Not implemented')
-                else:   # only one allocated tag
-                    need_move.append(line)
-                    if slot_alloc == FSTMET:
-                        setattr(line, 'align_to_tags', line.met_tags)
-                    elif slot_alloc == DETERMIN:
-                        slots = [self.tag_slot[tag][0] for tag in line.tags]
-                        slot_width = max([self.tag_slot[tag][1]
-                                          for tag in line.tags])
-                        setattr(line, 'slots', slots)
-                        setattr(line, 'slot_width', slot_width)
-
-        logger.debug('All instructions marked.')
-        # in first met, until now all instructions are marked by:
-        # branch: reserved_tags
-        # target: reserved_tags, align_to
-        # in predetermined, we do not need the marks
-
-        logger.debug('Moving...')
-        if move_method == PADDING:
-            for line in need_move:
-                if slot_alloc == FSTMET:
-                    if len(line.align_to_tags) > 1:
-                        raise Exception('Not implemented')
-                    padding_line = self.toolkit.padding_to_label(
-                        self.default_fixed_slot_bit_width, 'fsttag%s' % line.align_to_tags[0])
-                elif slot_alloc == DETERMIN:
-                    padding_line = self.toolkit.padding_to_slot(
-                        line.slot_width, slot=line.slots[0])
-                self.insert_before(padding_line, line)
-                self.insert_after(self.toolkit.get_landing_pad_line(), line)
-
-        elif move_method == INSERT:
-            if need_move:
-                self.mark_all_basic_blocks()
-            line_to_trampo = dict()
-            for line in need_move:
-                if slot_alloc == FSTMET:
-                    if len(line.align_to_tags) > 1:
-                        raise Exception('Not implemented')
-                    padding_line = self.toolkit.padding_to_label(
-                        self.default_fixed_slot_bit_width, 'fsttag%s' % line.align_to_tags[0])
-                elif slot_alloc == DETERMIN:
-                    print(line+'use')
-                    padding_line = self.toolkit.padding_to_slot(
-                        line.slot_width, slot=line.slots[0])
-                trampo = self.build_target_trampo(
-                    line, padding_line=padding_line)
-                line_to_trampo[line] = trampo
-            move_lst = [x for x in need_move]
-            while move_lst:
-                logger.debug('Moving: %d/%d' %
-                             (len(need_move)-len(move_lst), len(need_move)))
-                self.compile_tmp()
-                line_ideal_place = dict()
-                for x in move_lst:
-                    if slot_alloc == FSTMET:
-                        line_ideal_place[x] = self.insert_ideal_place(
-                            x.get_label(), align_label='fsttag%s' % x.align_to_tags[0])
-                    elif slot_alloc == DETERMIN:
-                        line_ideal_place[x] = self.insert_ideal_place(
-                            x.get_label(), slot=line.slots[0])
-                move_lst.sort(key=lambda x: line_ideal_place[x])
-                search_begin = self.label_address['.scfi_real_' +
-                                                  move_lst[0].get_label()]
-                self.insert_trampo(
-                    line_to_trampo[move_lst[0]], search_begin, line_ideal_place[move_lst[0]])
-                logger.debug('insert:%s' % move_lst[0])
-                move_lst.pop(0)
-        else:
-            raise Exception('Unknown move method %s' % move_method)
-
-        # optimization
-        for _ in range(optimize_round):
-            logger.info('Optimizing...')
-            self.compile_tmp()
-            if move_method == PADDING:
-                pass
-            elif move_method == INSERT:
-                for line in need_move:
-                    self.fix_trampo_address(line_to_trampo[line])
-
-        # compile and get the slots
-        self.compile_tmp()
-        if slot_alloc == FSTMET:
-            for tag in self.inside_valid_tags:
-                self.tag_slot[tag] = self.read_label_address(
-                    'fsttag%s' % str(tag)) & ((1 << self.default_fixed_slot_bit_width)-1)
-
-        # update all slots
-        for line in need_reprocessing_branches:
-            self.toolkit.set_branch_slot(
-                line, self.tag_slot[line.reserved_tags[0]])
-        for line in need_reprocessing_targets:
-            pass
-
-    def try_move_slot(self, tag, target_slot):  # todo
-        return
-
-    # mixed: padding (<threshold), trampline (>threshold), determined slot, single slot
-    def move_targets_mix(self, trampline_threshold=6):
-        logger.info(
-            'Only_move_targets_nature, move method: mix, threshold: %d bit(s)' % trampline_threshold)
-        self.cut_one_side_tags()
-
-        need_move = []
-
-        # modify all branches
-        for line in self.marked_branch_lst:
-            prev = line.prev
-            self.unlink_line(line)
-            slots = [self.tag_slot[tag][0] for tag in line.tags]
-            if len(slots) > 1:
-                raise Exception('Not implemented')
-            slot_width = max([self.tag_slot[tag][1] for tag in line.tags])
-            for new_line in self.toolkit.modified_branch(line, type=self.slot_type, reserved=False, slots=slots, slot_width=slot_width)[::-1]:
-                self.insert_after(new_line, prev)
-
-        allocated_tags = self.valid_target_tags
-
-        for line in self.marked_target_lst:
-            need_move.append(line)
-            slots = [self.tag_slot[tag][0] for tag in line.tags]
-            slot_width = max([self.tag_slot[tag][1]
-                              for tag in line.tags])
-            setattr(line, 'slots', slots)
-            setattr(line, 'slot_width', slot_width)
-
-        logger.debug('All instructions marked.')
-
-        logger.debug('Moving...')
-        if need_move:
-            self.mark_all_basic_blocks()
-        line_to_trampo = dict()
-
-        need_insert = []
-        for line in need_move:
-            if line.slot_width <= trampline_threshold:
-                padding_line = self.toolkit.padding_to_slot(
-                    line.slot_width, slot=line.slots[0])
-                self.insert_before(padding_line, line)
-                self.insert_after(self.toolkit.get_landing_pad_line(), line)
-
-            else:  # INSERT:
-                need_insert.append(line)
-                padding_line = self.toolkit.padding_to_slot(
-                    line.slot_width, slot=line.slots[0])
-                trampo = self.build_target_trampo(
-                    line, padding_line=padding_line)
-                line_to_trampo[line] = trampo
-
-        total_target_num = len(need_move)
-        padding_target_num = len(need_move)-len(need_insert)
-        logger.info("Padding: %d (%02f%%), Trampoline: %d (%02f%%)" % (padding_target_num, padding_target_num /
-                                                                       total_target_num * 100, total_target_num-padding_target_num, 100-(padding_target_num/total_target_num * 100)))
-
-        while need_insert:
-            logger.debug('Moving: %d/%d' %
-                         (total_target_num-padding_target_num-len(need_insert)+1, total_target_num-padding_target_num))
-            self.compile_tmp()
-            line_ideal_place = dict()
-            for x in need_insert:
-                line_ideal_place[x] = self.insert_ideal_place(
-                    x.get_label(), width=x.slot_width, slot=x.slots[0])
-            need_insert.sort(key=lambda x: line_ideal_place[x])
-            search_begin = self.label_address['.scfi_real_' +
-                                              need_insert[0].get_label()]
-            self.insert_trampo(
-                line_to_trampo[need_insert[0]], search_begin, line_ideal_place[need_insert[0]], need_insert[0].slot_width)
-            logger.debug('insert:%s' % need_insert[0])
-            need_insert.pop(0)
-
-        # compile and get the slots
-        self.compile_tmp()
-
     # todo, it is not very common
     def remove_single_edge(self):
         return
         remove_tags = [
             tag for tag in self.both_valid_tag if self.tag_target_count(tag) == 1]
         print(len(remove_tags), '/', len(self.both_valid_tag))
+
+            
+    def try_convert_indirect(self):
+        '''Try to convert some indirect branches to direct branches'''
+        for branch in [b for b in self.marked_branch_lst]:
+            '''Some indirect call has a "callq *Label" format, we directly dereference the pointer here.'''
+            if self.toolkit.get_call_expr(branch) in self.label_name_to_line.keys():    # call *Label
+                if self.label_name_to_line[self.toolkit.get_call_expr(branch)].next.get_directive_type()=='.quad':  #Label:\n  .quad label_name
+                    traget_name=self.label_name_to_line[self.toolkit.get_call_expr(branch)].next.strip_comment().split()[-1].strip()
+                    if traget_name in self.functions:
+                        branch.set_str("\tcallq\t%s"%traget_name)
+                        self.marked_branch_lst.remove(branch)
+                        
 
     def new_lds(self):
         '''Ensure the alignment in ld script'''
@@ -1004,7 +618,6 @@ class SCFIAsm(AsmSrc):
                         elif '#default#' in line:
                             fo.writelines(other_s)
 
-
     def add_ID_fail(self):
         lines = [
             Line('__scfi_ID_fail:'),
@@ -1022,7 +635,6 @@ class SCFIAsm(AsmSrc):
             return 0
         return max(self.tag_color.values())  # requires coloring first
 
-    # TODO: branch number sort
     def coloring(self, runtime_first=True):
         '''Coloring: 0 stands for slot, 1,2,3 for IDs'''
         self.tag_color = dict()
@@ -1196,8 +808,6 @@ class SCFIAsm(AsmSrc):
                         target.slots_info.add(SLOT_INFO.new_ID(0xFF, i))
             target.slots_info = SLOTS_INFO(target.slots_info)
 
-
-
     def branch_instrument(self,debug=False, skip_lib=False,skip_low_bit=0):
         for line in self.marked_branch_lst:
             next_line = line.next
@@ -1295,15 +905,3 @@ class SCFIAsm(AsmSrc):
                     if not s.is_traditional:
                         lst.append(s.width)
             f.write('Slot width (by target):' + str(collections.Counter(lst))+'\n')
-            
-
-    def try_convert_indirect(self):
-        for branch in [b for b in self.marked_branch_lst]:
-            '''Some indirect call has a "callq *Label" format, we directly dereference the pointer here.'''
-            if self.toolkit.get_call_expr(branch) in self.label_name_to_line.keys():    # call *Label
-                if self.label_name_to_line[self.toolkit.get_call_expr(branch)].next.get_directive_type()=='.quad':  #Label:\n  .quad label_name
-                    traget_name=self.label_name_to_line[self.toolkit.get_call_expr(branch)].next.strip_comment().split()[-1].strip()
-                    if traget_name in self.functions:
-                        branch.set_str("\tcallq\t%s"%traget_name)
-                        self.marked_branch_lst.remove(branch)
-                        

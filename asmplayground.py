@@ -18,12 +18,14 @@ INTEL = 1
 
 
 class Environment():
+    '''Record the asm language and syntax'''
     def __init__(self, isa=X86, syntax=ATT):
         self.isa = X86
         self.syntax = ATT
 
     @property
     def comment_character(self):
+        '''set the comment character of asm'''
         if self.isa == X86:
             return '#'
         if self.isa == ARM:
@@ -34,6 +36,7 @@ global_env = Environment(X86, ATT)
 
 
 class Line(str):
+    '''A line in asm file'''
     key_id = 0  # we need a unique id for each Line, otherwise we cannot distinguish different line with the same content
 
     def __init__(self, s):
@@ -151,6 +154,9 @@ class Line(str):
 
 
 class AsmSrc(str):
+    '''Bidirectional linked list.
+    Traversing: use traverse_lines
+    '''
     def __init__(self, s):
         super(AsmSrc, self).__init__()
         self.lines = [Line(i) for i in self.split('\n')]
@@ -210,6 +216,7 @@ class AsmSrc(str):
         yield p
 
     def traverse_from(self, line):
+        '''traverse from a line'''
         p = line
         while p.next != None:
             yield p
@@ -217,6 +224,7 @@ class AsmSrc(str):
         yield p
 
     def traverse_back_from(self, line):
+        '''traverse back from a line'''
         p = line
         while p.prev != None:
             yield p
