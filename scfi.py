@@ -63,6 +63,10 @@ class ToolKit():
     # TODO: support indirect jump
     def is_indirect_jump(self, line):
         return False
+        if global_env.isa == X86:
+            if global_env.syntax == ATT:
+                return True if line.is_instruction and 'jmp' in line and '*' in line else False
+        raise Exception('Unsupported syntax or ISA')
 
     def is_indirect_branch(self, line):
         return self.is_indirect_call(line) or self.is_indirect_jump(line)
@@ -227,8 +231,11 @@ class SLOT_INFO():
                         lines.append(Line('\tnop'))
                     else:
                         lines.append(Line('\tint3'))
+                    if 'call' in branch_line:
+                        lines.append(Line('\tcallq \t*%r11\t\t# scfi_call ID'))
+                    else:
+                        lines.append(Line('\tjmpq \t*%r11\t\t# scfi_call ID'))
 
-                    lines.append(Line('\tcallq \t*%r11\t\t# scfi_call ID'))
                     return lines
             raise Exception('Unsupported syntax or ISA')
         else:
@@ -256,7 +263,10 @@ class SLOT_INFO():
                         else:
                             lines.append(Line('\tint3'))
                         # lines.append(Line('\tud2'))
-                        lines.append(Line('\tcallq *%s\t\t# scfi_call slot debug' % call_expr))
+                        if 'call' in branch_line:
+                            lines.append(Line('\tcallq *%s\t\t# scfi_call slot debug' % call_expr))
+                        else:
+                            lines.append(Line('\tjmpq *%s\t\t# scfi_call slot debug' % call_expr))
                     else:
                         slot_mask = 0xffffffffffffffff ^ ((1 << slot_width)-1)
                         tmp_reg = '%r11'
@@ -269,7 +279,10 @@ class SLOT_INFO():
                                 lines.append(Line('\tjge\t.+10'))
                         lines.append(Line('\tand\t$%s, %s' % (hex(slot_mask),tmp_reg)))
                         lines.append(Line('\tor\t$%s, %s' % (hex(slot_value),tmp_reg)))
-                        lines.append(Line('\tcallq \t*%s\t# scfi_call slot' % tmp_reg))
+                        if 'call' in branch_line:
+                            lines.append(Line('\tcallq \t*%s\t# scfi_call slot' % tmp_reg))
+                        else:
+                            lines.append(Line('\tjmpq \t*%s\t# scfi_call slot' % tmp_reg))
                     return lines
             raise Exception('Unsupported syntax or ISA')
 
@@ -1130,14 +1143,15 @@ class SCFIAsm(AsmSrc):
         counts=collections.Counter(lst)
         logger.info('Coloring (by target):' + str(counts))
 
+        # update: do not sort, it benifit the performance
         # sort color number from more to less
-        sorted_color=sorted([color for color in counts.keys() if color!=0],key= lambda x: counts[x],reverse=True)
-        old_to_new=dict()
-        for i in range(len(sorted_color)):
-            old_to_new[sorted_color[i]]=i+1
-        for tag in self.both_valid_tag:
-            if self.tag_color[tag]: # skip 0
-                self.tag_color[tag]=old_to_new[self.tag_color[tag]]
+        # sorted_color=sorted([color for color in counts.keys() if color!=0],key= lambda x: counts[x],reverse=True)
+        # old_to_new=dict()
+        # for i in range(len(sorted_color)):
+        #     old_to_new[sorted_color[i]]=i+1
+        # for tag in self.both_valid_tag:
+        #     if self.tag_color[tag]: # skip 0
+        #         self.tag_color[tag]=old_to_new[self.tag_color[tag]]
 
 
         lst = []
@@ -1225,7 +1239,7 @@ class SCFIAsm(AsmSrc):
             return
         self.branch_instrument(debug=debug,skip_lib=skip_lib,skip_low_bit=skip_low_bit)
 
-    def scfi_all(self, orthogonal=True, max_slot_length=8,debug=False,skip_lib=False,runtime_first=True,skip_low_bit=1):
+    def scfi_all(self, orthogonal=True, max_slot_length=8,debug=False,skip_lib=False,runtime_first=True,skip_low_bit=0):
         '''Paper version: branch with only one identifier, branch may has multiple.
         Only padding, not trampoline.
         :param orthogonal: Generate orthogonal identifiers
@@ -1244,12 +1258,10 @@ class SCFIAsm(AsmSrc):
         self.coloring(runtime_first=runtime_first)
         self.colored_IDs()
         self.huffman_after_coloring(
-            orthogonal=orthogonal, max_length=max_slot_length, runtime_first=runtime_first)
+            orthogonal=orthogonal, max_length=max_slot_length-skip_low_bit, runtime_first=runtime_first)
         self.code_instrument(debug=debug, skip_lib=skip_lib, skip_low_bit=skip_low_bit)
         self.new_lds()
         self.compile_tmp()
-        print(str('_ZN10xalanc_1_814FormatterToXML10flushCharsEv' in self.marked_target_lst))
-        print(self.label_name_to_line['_ZN10xalanc_1_814FormatterToXML10flushCharsEv'])
     
     def log_file(self,path):
         import collections
@@ -1275,6 +1287,15 @@ class SCFIAsm(AsmSrc):
                     lst.append(self.tag_color[tag])
             f.write('Coloring (by branch):' + str(collections.Counter(lst))+'\n')
             f.write('Max multi-tag target # tag: %d' % max_identifier+'\n')
+            f.write('Max slot length: %d' % self.max_slot_length+'\n')
+
+            lst=[]
+            for t in self.marked_target_lst:
+                for s in t.slots_info.slots:
+                    if not s.is_traditional:
+                        lst.append(s.width)
+            f.write('Slot width (by target):' + str(collections.Counter(lst))+'\n')
+            
 
     def try_convert_indirect(self):
         for branch in [b for b in self.marked_branch_lst]:

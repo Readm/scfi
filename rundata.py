@@ -62,9 +62,12 @@ def build_scfi(debug=False, dump_cfg=False):
         work_path = src_path.replace('fast-cfi', 'scfi')
         cfg_path = '/home/readm/scfi/workload/%s/work/scfi_tmp.cfg' % name
         if dump_cfg:
-            cfg=CFG.read_from_llvm_pass(cfg_path,inherit_path='/home/readm/scfi/workload/%s/doxygen/html/'%name)#,to_object=True)
+            if os.path.isdir('/home/readm/scfi/workload/%s/doxygen/html/'%name):
+                cfg=CFG.read_from_llvm_pass(cfg_path,inherit_path='/home/readm/scfi/workload/%s/doxygen/html/'%name)#,to_object=True)
+            else:
+                cfg=CFG.read_from_llvm_pass(cfg_path)#,to_object=True)
             cfg.dump('/home/readm/scfi/workload/%s/work/scfi_tmp.cfgdump' % name)
-            exit()
+            continue
         cfg=CFG.load(cfg_path+'dump')
         asm = SCFIAsm.read_file(filePath, src_path=src_path)
         asm.tmp_asm_path = work_path+'scfi_tmp.s'
@@ -73,7 +76,7 @@ def build_scfi(debug=False, dump_cfg=False):
         asm.tmp_lds_path = work_path+'scfi_tmp.lds'
         asm.move_file_directives_forward()
         asm.mark_all_instructions(cfg=cfg)
-        asm.scfi_all(debug=debug,max_slot_length=7)
+        asm.scfi_all(debug=debug,max_slot_length=8,skip_low_bit=1)
         asm.log_file('/home/readm/scfi/log/scif.log')
 
 
@@ -164,12 +167,15 @@ def apache():
     asm.move_file_directives_forward()
     asm.mark_all_instructions(cfg=CFG.read_from_llvm_pass('scfi_tmp.cfg'))
     asm.scfi_all(max_slot_length=6,skip_lib=True)
+    asm.log_file('/home/readm/scfi/log/scfi.log')
     #asm.compile_tmp()
     subprocess.run('gcc %s.s -o %s.o -g -c' %('scfi_tmp', 'scfi_tmp'), shell=True)
     subprocess.run('clang -O2 -pthread -flto -o httpd scfi_tmp.o -Wl,--export-dynamic,-T,scfi_tmp.lds server/.libs/libmain.a modules/core/.libs/libmod_so.a modules/http/.libs/libmod_http.a server/mpm/event/.libs/libevent.a os/unix/.libs/libos.a -L/usr/local/lib /usr/local/lib/libpcre.so /usr/lib/x86_64-linux-gnu/libaprutil-1.so /usr/lib/x86_64-linux-gnu/libapr-1.so -g', shell=True)
 
-work_lst = ["473.astar", "483.xalancbmk", "444.namd"]
-# work_lst = ['400.perlbench', '401.bzip2', '445.gobmk', '456.hmmer', '458.sjeng', '464.h264ref', '433.milc', '473.astar', '444.namd', '403.gcc',  '471.omnetpp', '483.xalancbmk']
+
+# work_lst = ['400.perlbench', '401.bzip2', '403.gcc', '445.gobmk', '456.hmmer', '458.sjeng', '464.h264ref','471.omnetpp', '473.astar', '483.xalancbmk']
+
+work_lst = ['483.xalancbmk']
 #logger.setLevel(logging.DEBUG)
 # work_lst=["483.xalancbmk"]
 #exit()
@@ -177,8 +183,8 @@ work_lst = ["473.astar", "483.xalancbmk", "444.namd"]
 # prepare_cfg()
 # exit()
 # build_scfi(dump_cfg=True)
-# build_scfi(debug=False)
+build_scfi(debug=False)
 # run_new(l=['./scfi_tmp'],n=1,link=True)
 # size()
-run_new(l=['./baseline','./scfi'],n=11,link=False)
+# run_new(l=['./baseline','./scfi'],n=11,link=False)
 exit()
