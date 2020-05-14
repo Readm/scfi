@@ -8,7 +8,6 @@ logger.setLevel(logging.INFO)
 
 
 
-
 # with open('/home/readm/scfi/workload/471.omnetpp/doxygen/inherit/classbusLAN__inherit__graph.dot') as f:
 #     G=pydot.graph_from_dot_data(f.read())
 #     for i in G:
@@ -19,21 +18,23 @@ logger.setLevel(logging.INFO)
 
 class InheritGraph(dict):
     '''A dict, always give the parent name. Only support single inherit.'''
+
     def __init__(self, path):
         import pydot
         '''Read inherit graph file in the path'''
         logger.info('Loading inherit graph from: '+path)
         for file_name in os.listdir(path):
             if file_name.endswith("__inherit__graph.dot"):
-                with open(os.path.join(path,file_name)) as f:
-                    G_lst=pydot.graph_from_dot_data(f.read())
-                    G=G_lst[0]
+                with open(os.path.join(path, file_name)) as f:
+                    G_lst = pydot.graph_from_dot_data(f.read())
+                    G = G_lst[0]
                     for edge in (G.get_edges()):
-                        parent=G.get_node(edge.get_source())[0].get('label')[1:-1]
-                        child =G.get_node(edge.get_destination())[0].get('label')[1:-1]
-                        self[child]=parent
-                        logger.debug('Inherit: %s from %s'%(child,parent))
-
+                        parent = G.get_node(edge.get_source())[
+                            0].get('label')[1:-1]
+                        child = G.get_node(edge.get_destination())[
+                            0].get('label')[1:-1]
+                        self[child] = parent
+                        logger.debug('Inherit: %s from %s' % (child, parent))
 
 
 class CFG():
@@ -69,8 +70,9 @@ class CFG():
     @classmethod
     def read_from_llvm_pass(cls, path, ignore_class_name=False, union_file='scfi_tmp.union', inherit_path='', virtual_inherit=False, only_virtual=False, to_object=False):
         import re
-        logger.info('Read CFG from llvm pass: virtual_inherit:%s only_virtual:%s to_object:%s' %(str(virtual_inherit), str(only_virtual), str(to_object)))
-        inherit_graph=dict()
+        logger.info('Read CFG from llvm pass: virtual_inherit:%s only_virtual:%s to_object:%s' % (
+            str(virtual_inherit), str(only_virtual), str(to_object)))
+        inherit_graph = dict()
         if inherit_path:
             inherit_graph = InheritGraph(inherit_path)
 
@@ -81,11 +83,12 @@ class CFG():
                         return s
                     s = inherit_graph[s]
                 return s
-            else: return s
+            else:
+                return s
 
         def get_top_parent(s):
             retval = _get_top_parent(s)
-            logger.debug('Type Inherit: %s -> %s' %(s, retval))
+            logger.debug('Type Inherit: %s -> %s' % (s, retval))
             return retval
 
         # get the parent class name
@@ -93,13 +96,13 @@ class CFG():
             pattern = re.compile(r"\w+")
             token_lst = pattern.findall(s)
             for token in token_lst:
-                if token in inherit_graph.keys() and inherit_graph[token]!= 'cObject':
-                    tmp_pattern =  re.compile(r'\b%s\b'%token)
+                if token in inherit_graph.keys() and inherit_graph[token] != 'cObject':
+                    tmp_pattern = re.compile(r'\b%s\b' % token)
                     new_str = get_top_parent(token)
-                    s=tmp_pattern.sub(new_str,s)
+                    s = tmp_pattern.sub(new_str, s)
             return s
 
-        #strip class/struct number,
+        # strip class/struct number,
         def class_strip(s):
             pattern = re.compile(r"class\.[^:]+::[^\.]+\.[\d.]+")
             lst = re.findall(pattern, s)
@@ -115,19 +118,18 @@ class CFG():
                 new_type = re.match(pattern, _type).group()
                 s = s.replace(_type, new_type)
             return s
-        
+
         # sometimes we need union some set
-        union_set=[]
-        if os.path.exists(os.path.join(os.path.split(path)[0],union_file)):
-            with open(os.path.join(os.path.split(path)[0],union_file)) as f:
+        union_set = []
+        if os.path.exists(os.path.join(os.path.split(path)[0], union_file)):
+            with open(os.path.join(os.path.split(path)[0], union_file)) as f:
                 union_l = []
                 for line in f:
                     if not line.startswith('(end)'):
                         union_l.append(line.strip())
                     else:
                         union_set.append(union_l)
-                        union_l=[]
-
+                        union_l = []
 
         # read the file
         with open(path) as f:
@@ -142,8 +144,10 @@ class CFG():
             items = set()
             current_set = None  # empty
             for line in f:
-                if line.startswith('#'): continue # white list
-                if line.strip().endswith('0:0'): continue
+                if line.startswith('#'):
+                    continue  # white list
+                if line.strip().endswith('0:0'):
+                    continue
                 if line.startswith('Virtual Function Branches:'):
                     current_set = virtual_branch
                     continue
@@ -166,16 +170,16 @@ class CFG():
                     _type = class_strip(line.strip()[6:])
                     for union_lst in union_set:
                         if _type in union_lst:
-                            _type=union_lst[0]
+                            _type = union_lst[0]
                     # print(_type)
                     continue
                 try:
                     current_set[_type].add(line.strip())
                 except KeyError:
                     current_set[_type] = set([line.strip()])
-            
-            if only_virtual: pointer_target=pointer_branch=dict()
 
+            if only_virtual:
+                pointer_target = pointer_branch = dict()
 
             # remove items in Function Pointer if in Virtual Call
             rm_lst = []
@@ -193,7 +197,7 @@ class CFG():
 
             # update pointers to top
             inherit_lst = [pointer_branch, pointer_target]
-            if virtual_inherit: 
+            if virtual_inherit:
                 inherit_lst.append(virtual_target)
                 inherit_lst.append(virtual_branch)
             for _set in inherit_lst:
@@ -201,7 +205,7 @@ class CFG():
                 for key in [k for k in _set.keys()]:
                     if key != class_to_top(key):
                         rm_lst.append(key)
-                        _set[class_to_top(key)]=_set[key]
+                        _set[class_to_top(key)] = _set[key]
                 for key in rm_lst:
                     del _set[key]
 
@@ -268,7 +272,6 @@ class CFG():
                                     'Multi-tag target found: %d %s' % (len(target[item]), item))
                         except KeyError:
                             target[item] = set([new_type])
-                
 
         return cls(target, branch)
 
@@ -283,13 +286,13 @@ class CFG():
             except KeyError:  # some branches in CFG do not appera in assemble file
                 continue
 
-    def dump(self,path):
+    def dump(self, path):
         import pickle
-        with open(path,'wb+') as f:
-            pickle.dump(self,f)
-    
+        with open(path, 'wb+') as f:
+            pickle.dump(self, f)
+
     @classmethod
-    def load(cls,path):
+    def load(cls, path):
         import pickle
-        with open(path,'rb') as f:
+        with open(path, 'rb') as f:
             return pickle.load(f)

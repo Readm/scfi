@@ -26,7 +26,7 @@ def codebook(iter, weight_fun=lambda x, y: x+y):
     for i in iter:
         available.append(Node(symbol=i[0], weight=i[1]))
 
-    copy=[n for n in available]
+    copy = [n for n in available]
 
     if len(available) == 0:
         return dict([])
@@ -40,4 +40,4 @@ def codebook(iter, weight_fun=lambda x, y: x+y):
         r.parent = p
         available.append(p)
 
-    return {n.symbol:n.code for n in copy} 
+    return {n.symbol: n.code for n in copy}

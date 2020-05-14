@@ -19,6 +19,7 @@ INTEL = 1
 
 class Environment():
     '''Record the asm language and syntax'''
+
     def __init__(self, isa=X86, syntax=ATT):
         self.isa = X86
         self.syntax = ATT
@@ -157,6 +158,7 @@ class AsmSrc(str):
     '''Bidirectional linked list.
     Traversing: use traverse_lines
     '''
+
     def __init__(self, s):
         super(AsmSrc, self).__init__()
         self.lines = [Line(i) for i in self.split('\n')]
