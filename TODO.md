@@ -11,7 +11,7 @@
       + [x] huffman slot allocation
     + [x]  重排
       + [x]  padding
-      + [x]  inserting
+      + [x]  inserting (removed)
       + [x]  mixed
   + [ ]  language support
     + [x]  X86
@@ -27,6 +27,4 @@
 
 ## leaving problems
 
-+ [x] how to modify arbitrary bits
 + [x] variable slot width/ allocation for it
-+ [ ] optimizing compile speed
