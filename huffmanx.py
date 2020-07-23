@@ -1,3 +1,7 @@
+'''A tool that can generate quasi-linear Huffman trees.
+
+Read http://readm.tech/2020/02/03/huffman/'''
+
 class Node():
     def __init__(self, symbol=None, weight=None, left=None, right=None, parent=None):
         self.symbol = symbol

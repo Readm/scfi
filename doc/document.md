@@ -97,7 +97,27 @@ Including following functions:
 
 ## SCFI instrument
 
-Waiting for publication
+code: scfi.py
+
+support functions:
+
++ class ToolKit, Language specified toolkit
+  + generate temp function labels, and add jumps to them
+  + judge whether an instruction is an indirect control flow transfer
+  + get call expression (in x86)
+  + add paddings
++ class PaddingLine, add padding to align with label/slot.
++ class IDLine, add a line records IDs
++ class SLOT_INFO, record a slot(or ID)
++ class SLOT_INFO, record slots(including a slot and multiple IDs)
++ class SCFIAsm, inherit from AsmSrc, can:
+  + mark all branch and target according to the normalized CFG
+    + find targets by function labels
+    + find branches by debug location
+  + cut_one_side_tags: Eliminate tags that only appear in branches or targets.
+  + compile_tmp: Compile current asm file.
+  + try_convert_indirect: Eliminate branches that have only one valid target.
+  + new_lds: generate a new ld script for current section alignment.
 
 ## Python toolkit for SPEC
 
@@ -105,6 +125,9 @@ code: test_tools
 
 not finished
 
-
+data.py: Summarize the log, provide a convenient output. Change as needed at any time.
+rundata.py: Run the SPEC. Change as needed at any time.
+runspec.py: Toolkit to compile/link/run/count the SPEC.
+test_httpd.py: test HTTP server
 
 

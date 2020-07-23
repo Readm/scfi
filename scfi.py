@@ -23,7 +23,7 @@ DETERMIN = 3
 
 
 class ToolKit():
-    '''Language specified toolkits'''
+    '''Language specified toolkit'''
 
     def __init__(self, landing_pad='.byte 0xF3, 0x0F, 0x1E, 0xFA', landing_pad_len=4):
         self.landing_pad = landing_pad
@@ -482,6 +482,7 @@ class SCFIAsm(AsmSrc):
         return self.valid_branch_tags.intersection(self.valid_target_tags)
 
     def cut_one_side_tags(self):
+        '''Eliminate tags that only appear in branch or target'''
         logger.info('Cutting one side tags...')
         for target in self.marked_target_lst:
             target.tags = [
@@ -860,7 +861,7 @@ class SCFIAsm(AsmSrc):
                 if back_up:
                     self.insert_after(back_up, line)
 
-    def code_instrument(self, debug=False, skip_lib=False, skip_low_bit=0):
+    def scfi_code_instrument(self, debug=False, skip_lib=False, skip_low_bit=0):
         self.scfi_target_instrument(skip_low_bit)
         if len(self.both_valid_tag) <= 1:
             return
@@ -887,7 +888,7 @@ class SCFIAsm(AsmSrc):
         self.colored_IDs()
         self.huffman_after_coloring(
             orthogonal=orthogonal, max_length=max_slot_length-skip_low_bit, runtime_first=runtime_first)
-        self.code_instrument(debug=debug, skip_lib=skip_lib,
+        self.scfi_code_instrument(debug=debug, skip_lib=skip_lib,
                              skip_low_bit=skip_low_bit)
         self.new_lds()
         self.compile_tmp()
