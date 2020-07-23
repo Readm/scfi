@@ -822,14 +822,14 @@ class SCFIAsm(AsmSrc):
                         target.slots_info.add(SLOT_INFO.new_ID(0xFF, i))
             target.slots_info = SLOTS_INFO(target.slots_info)
 
-    def branch_instrument(self, debug=False, skip_lib=False, skip_low_bit=0):
+    def scfi_branch_instrument(self, debug=False, skip_lib=False, skip_low_bit=0):
         for line in self.marked_branch_lst:
             next_line = line.next
             self.unlink_line(line)
             self.insert_lines_before(
                 line.slot_info.build_prefix_line_and_branch(line, debug=debug, skip_lib=skip_lib, skip_low_bit=skip_low_bit), next_line)
 
-    def target_instrument(self, skip_low_bit=0):
+    def scfi_target_instrument(self, skip_low_bit=0):
         if len(self.both_valid_tag) <= 1:  # if no slot, only marks for landingpad
             for line in self.marked_target_lst:
                 self.insert_after(self.toolkit.get_landing_pad_line(), line)
@@ -861,10 +861,10 @@ class SCFIAsm(AsmSrc):
                     self.insert_after(back_up, line)
 
     def code_instrument(self, debug=False, skip_lib=False, skip_low_bit=0):
-        self.target_instrument(skip_low_bit)
+        self.scfi_target_instrument(skip_low_bit)
         if len(self.both_valid_tag) <= 1:
             return
-        self.branch_instrument(
+        self.scfi_branch_instrument(
             debug=debug, skip_lib=skip_lib, skip_low_bit=skip_low_bit)
 
     def scfi_all(self, orthogonal=True, max_slot_length=8, debug=False, skip_lib=False, runtime_first=True, skip_low_bit=0):
@@ -894,7 +894,12 @@ class SCFIAsm(AsmSrc):
 
 
     def random_map(self, bit_width):
-        
+        pass
+        '''Not applicable to current version'''
+    
+    def abcfi_code_instrument(self):
+        pass
+        '''Not applicable to current version'''
         
 
 

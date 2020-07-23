@@ -7,36 +7,6 @@ logger = logging.getLogger('SCFI')
 logger.setLevel(logging.INFO)
 
 
-
-# with open('/home/readm/scfi/workload/471.omnetpp/doxygen/inherit/classbusLAN__inherit__graph.dot') as f:
-#     G=pydot.graph_from_dot_data(f.read())
-#     for i in G:
-#         for edge in (i.get_edges()):
-#             print(i.get_node(edge.get_source())[0].get('label'))
-#             print(i.get_node(edge.get_destination())[0].get('label'))
-
-
-class InheritGraph(dict):
-    '''A dict, always give the parent name. Only support single inherit.'''
-
-    def __init__(self, path):
-        import pydot
-        '''Read inherit graph file in the path'''
-        logger.info('Loading inherit graph from: '+path)
-        for file_name in os.listdir(path):
-            if file_name.endswith("__inherit__graph.dot"):
-                with open(os.path.join(path, file_name)) as f:
-                    G_lst = pydot.graph_from_dot_data(f.read())
-                    G = G_lst[0]
-                    for edge in (G.get_edges()):
-                        parent = G.get_node(edge.get_source())[
-                            0].get('label')[1:-1]
-                        child = G.get_node(edge.get_destination())[
-                            0].get('label')[1:-1]
-                        self[child] = parent
-                        logger.debug('Inherit: %s from %s' % (child, parent))
-
-
 class CFG():
     '''Label based CFG, each target/branch has tags(labels)
     Tags can be strings, int ...
@@ -50,57 +20,17 @@ class CFG():
         # remember: the tags is in a list, we support multi tags
 
     @classmethod
-    def read_from_llvm_fastcfi(cls, path):
-        with open(path) as f:
-            target, branch = dict(), dict()
-            for line in f:
-                line = line.strip()
-                if line.startswith('FastCFI:callee'):
-                    info = line.replace('FastCFI:callee=', '').split('@')
-                    target[info[0]] = [info[-1]]
-                elif line.startswith('FastCFI:caller'):
-                    info = line.replace('FastCFI:caller=', '').split('@')
-                    branch[info[0]] = [info[-1]]
-            valid_tags = branch.values()
-            for key in [k for k in target.keys()]:
-                if target[key] not in valid_tags:
-                    target.pop(key)
-            return cls(target=target, branch=branch)
+    def read_from_llvm_pass(cls, path, union_file='scfi_tmp.union',  only_virtual=False):
+        '''
+        Read from our CFG from the llvm pass:
+        
+        union_file: Manually merge some types, the format is one type per line, and a line with only '(end)' ends a merge.
+        only_virtual: only remain the virtual function results
 
-    @classmethod
-    def read_from_llvm_pass(cls, path, ignore_class_name=False, union_file='scfi_tmp.union', inherit_path='', virtual_inherit=False, only_virtual=False, to_object=False):
+        '''
         import re
-        logger.info('Read CFG from llvm pass: virtual_inherit:%s only_virtual:%s to_object:%s' % (
-            str(virtual_inherit), str(only_virtual), str(to_object)))
-        inherit_graph = dict()
-        if inherit_path:
-            inherit_graph = InheritGraph(inherit_path)
-
-        def _get_top_parent(s):
-            if inherit_path:
-                while s in inherit_graph.keys():
-                    if (not to_object) and inherit_graph[s] == 'cObject':
-                        return s
-                    s = inherit_graph[s]
-                return s
-            else:
-                return s
-
-        def get_top_parent(s):
-            retval = _get_top_parent(s)
-            logger.debug('Type Inherit: %s -> %s' % (s, retval))
-            return retval
-
-        # get the parent class name
-        def class_to_top(s):
-            pattern = re.compile(r"\w+")
-            token_lst = pattern.findall(s)
-            for token in token_lst:
-                if token in inherit_graph.keys() and inherit_graph[token] != 'cObject':
-                    tmp_pattern = re.compile(r'\b%s\b' % token)
-                    new_str = get_top_parent(token)
-                    s = tmp_pattern.sub(new_str, s)
-            return s
+        logger.info('Read CFG from llvm pass: only_virtual:%s ' % str(only_virtual))
+  
 
         # strip class/struct number,
         def class_strip(s):
@@ -194,20 +124,6 @@ class CFG():
                     rm_lst.append(key)
             for key in rm_lst:
                 del pointer_target[key]
-
-            # update pointers to top
-            inherit_lst = [pointer_branch, pointer_target]
-            if virtual_inherit:
-                inherit_lst.append(virtual_target)
-                inherit_lst.append(virtual_branch)
-            for _set in inherit_lst:
-                rm_lst = []
-                for key in [k for k in _set.keys()]:
-                    if key != class_to_top(key):
-                        rm_lst.append(key)
-                        _set[class_to_top(key)] = _set[key]
-                for key in rm_lst:
-                    del _set[key]
 
             tmp_branch = dict()
             for key in virtual_branch.keys():

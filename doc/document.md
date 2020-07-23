@@ -60,4 +60,51 @@ Note:
 
 ## CFG normalization
 
+code: cfg.py
+
+In order to use other forms of CFG, we designed CFG normalization. 
+
+For all CFGs, we assume they only consists of two parts: branches and targets. For each branch or target, it has multiple tags (always called *label* in papers, but in scfi, we call the asm function name *labels*, so we call the CFG labels *tags* instead). So in python:
+
+```
+class CFG:
+    self.target = target  # a dict that maps labels to a list of [tags]
+    self.branch = branch  # a dict that maps debug loc to a list of [tags]
+    # if there is only one tag, use a list to hold it.
+```
+All kind of CFGs should be normalized to this form for further instrument.
+
+## Assembly rewriting tool
+
+code: asmplayground.py
+
+Including following functions:
+
++ A class `Environment` set the asm language and syntax, currently only support X86 & AT&T.
++ A class `Line`, can
+  + strip the comment
+  + get the opcode
+  + judgment type: empty/comment/instruction/directive/label
+  + etc.
++ A class `AsmSrc`, supports
+  + read from/ write into file
+  + traverse lines
+  + get debug information
+  + get function labes
+  + insert a line/lines
+  + move a line/lines/functions
+  + etc.
+
+## SCFI instrument
+
+Waiting for publication
+
+## Python toolkit for SPEC
+
+code: test_tools
+
+not finished
+
+
+
 
