@@ -14,5 +14,6 @@ Structure:
   + data.py: count the data
   + rundata.py: run the tests
 
+For detailed document: [Document](doc/document.md)
 
 [TODO](TODO.md)
