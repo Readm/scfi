@@ -892,6 +892,22 @@ class SCFIAsm(AsmSrc):
         self.new_lds()
         self.compile_tmp()
 
+
+    def random_map(self, bit_width):
+        
+        
+
+
+    def abcfi_all(self, bit_width=8):
+        '''ABCFI version: all branches and targets requires padding, but no slot replacing and huffman coding.'''
+        self.try_convert_indirect()
+        self.cut_one_side_tags()
+        self.remove_single_edge()
+        self.random_map(bit_width=bit_width)
+        self.abcfi_code_instrument()
+        self.new_lds()
+        self.compile_tmp()
+
     def log_file(self, path):
         import collections
         with open(path, 'a') as f:
