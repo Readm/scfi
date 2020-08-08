@@ -24,7 +24,8 @@ Usage:
 add_subdirectory(SCFI)
 ```
 3. Build LLVM
-4. Use the pass by `opt -load ~/llvm_build_path/lib/LLVMSCFI.so -indirect-calls 1>/dev/null 2>scfi_tmp.cfg`
+4. Compile the LLVM bit file with `-g`
+5. Use the pass by `opt -load ~/llvm_build_path/lib/LLVMSCFI.so llvm_bit_file.bc -indirect-calls bc_or_ll_file 1>/dev/null 2>scfi_tmp.cfg`
 
 The output contains:
 
